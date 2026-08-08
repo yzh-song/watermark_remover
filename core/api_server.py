@@ -1,6 +1,6 @@
 """
-Flask API Server - Watermark Remover v11.0
-Multi-region selection, Poisson blending, KCF tracking, edge-aware masks
+Flask API Server - Watermark Remover v12.0
+Three-stage pipeline, strict error handling, preview mask endpoint.
 """
 import os
 import sys
@@ -14,13 +14,13 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 # ============================================================
-# Logging config - MUST be before any module imports
+# Logging config
 # ============================================================
 LOG_DIR = Path(r"D:\AI\watermark_remover\logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _api_log_fd = open(LOG_DIR / 'api_server.log', 'w', encoding='utf-8', buffering=1)
-_api_log_fd.write(f"=== API Server v11.0 started at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+_api_log_fd.write(f"=== API Server v12.0 started at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 _api_log_fd.flush()
 
 file_handler = logging.StreamHandler(_api_log_fd)
@@ -73,7 +73,7 @@ engine: Optional[InpaintingEngine] = None
 detector: Optional[WatermarkDetector] = None
 
 # ============================================================
-#<!-- HTML Frontend v11.0 - Multi-region canvas + Poisson blend + KCF tracking -->
+# HTML Frontend v12.0
 # ============================================================
 UI_HTML = r"""
 <!DOCTYPE html>
@@ -81,7 +81,7 @@ UI_HTML = r"""
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Watermark Remover v11.0</title>
+<title>AI Watermark Remover v12.0</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f1a;color:#e0e0e0;min-height:100vh}
@@ -136,7 +136,7 @@ h1{text-align:center;font-size:2em;margin:20px 0;background:linear-gradient(135d
 </head>
 <body>
 <div class="container">
-<h1>AI Watermark Remover v11.0</h1>
+<h1>AI Watermark Remover v12.0</h1>
 <div id="status" class="status">AI engine ready - Upload image or video</div>
 
 <div class="mode-tabs">
@@ -166,6 +166,7 @@ h1{text-align:center;font-size:2em;margin:20px 0;background:linear-gradient(135d
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
 <button class="btn btn-small" id="addRoiBtn" style="background:#667eea;color:white">+ Add Region</button>
 <button class="btn btn-small" id="clearAllRoiBtn">Clear All</button>
+<button class="btn btn-small" id="previewMaskBtn">Preview Mask</button>
 <span style="font-size:.8em;color:#888">Draw a rectangle on the canvas, then click "Add Region"</span>
 </div>
 <div class="roi-list" id="roiList"></div>
@@ -229,8 +230,7 @@ h1{text-align:center;font-size:2em;margin:20px 0;background:linear-gradient(135d
 var currentMode='auto',currentFile=null,isVideo=false,resultFilename=null;
 var isDrawing=false,drawStart={x:0,y:0},drawEnd={x:0,y:0};
 var displayScale=1.0,originalImage=null,videoDuration=0;
-var rois=[];  // Array of {x,y,w,h} for multi-region
-
+var rois=[];
 var COLORS=['#667eea','#e74c3c','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#3498db'];
 
 var uploadArea=document.getElementById('uploadArea');
@@ -251,6 +251,7 @@ var drawHint=document.getElementById('drawHint');
 var manualOptions=document.getElementById('manualOptions');
 var addRoiBtn=document.getElementById('addRoiBtn');
 var clearAllRoiBtn=document.getElementById('clearAllRoiBtn');
+var previewMaskBtn=document.getElementById('previewMaskBtn');
 var roiList=document.getElementById('roiList');
 var videoControls=document.getElementById('videoControls');
 var frameSlider=document.getElementById('frameSlider');
@@ -417,7 +418,6 @@ var ctx=roiCanvas.getContext('2d');
 ctx.clearRect(0,0,roiCanvas.width,roiCanvas.height);
 if(originalImage) ctx.drawImage(originalImage,0,0);
 
-// Draw all saved ROIs
 rois.forEach(function(r,i){
 var color=COLORS[i%COLORS.length];
 ctx.strokeStyle=color;
@@ -427,13 +427,11 @@ ctx.strokeRect(r.x,r.y,r.w,r.h);
 ctx.setLineDash([]);
 ctx.fillStyle=color+'22';
 ctx.fillRect(r.x,r.y,r.w,r.h);
-// Label
 ctx.fillStyle=color;
 ctx.font='12px sans-serif';
 ctx.fillText('#'+(i+1),r.x+2,r.y-4);
 });
 
-// Draw current drawing rectangle
 if(isDrawing){
 var x1=Math.min(drawStart.x,drawEnd.x);
 var y1=Math.min(drawStart.y,drawEnd.y);
@@ -484,7 +482,6 @@ roiCanvas.addEventListener('mouseleave',function(){
 if(isDrawing){isDrawing=false;drawHint.textContent='Selection cancelled - drag again';redrawAll();}
 });
 
-// --- Multi-region management ---
 addRoiBtn.addEventListener('click',function(){
 if(isDrawing)return;
 var x1=Math.max(0,Math.min(drawStart.x,drawEnd.x));
@@ -511,6 +508,37 @@ drawHint.textContent=isVideo?'Capture a frame and drag to select watermark':'Dra
 if(originalImage) redrawAll();
 });
 
+previewMaskBtn.addEventListener('click',async function(){
+if(!currentFile||rois.length===0){
+statusDiv.textContent='Add regions first, then preview mask';
+statusDiv.className='status error';
+return;
+}
+var formData=new FormData();
+formData.append('file',currentFile);
+formData.append('rois',JSON.stringify(rois));
+try{
+var resp=await fetch('/api/preview_mask',{method:'POST',body:formData});
+var data=await resp.json();
+if(data.success){
+var img=new Image();
+img.onload=function(){
+originalImage=img;
+setupCanvas();
+};
+img.src=data.preview_url+'?t='+Date.now();
+statusDiv.textContent='Mask preview updated on canvas';
+statusDiv.className='status success';
+}else{
+statusDiv.textContent='Preview failed: '+(data.error||'Unknown');
+statusDiv.className='status error';
+}
+}catch(err){
+statusDiv.textContent='Preview request failed: '+err.message;
+statusDiv.className='status error';
+}
+});
+
 function deleteRoi(index){
 rois.splice(index,1);
 renderRoiList();
@@ -535,7 +563,6 @@ roiList.appendChild(div);
 });
 }
 
-// --- Process ---
 processBtn.addEventListener('click',async function(){
 if(!currentFile)return;
 processBtn.disabled=true;
@@ -574,7 +601,6 @@ resultVideoPreview.style.display='none';
 
 statusDiv.textContent='Done! ('+(data.time?data.time.toFixed(1):'?')+'s)';
 statusDiv.className='status success';
-if(data.warning)statusDiv.textContent+=' WARNING: '+data.warning;
 if(data.hint)statusDiv.textContent+=' | '+data.hint;
 }else{
 statusDiv.textContent='Failed: '+(data.error||'Unknown error');
@@ -606,7 +632,7 @@ statusDiv.className='status';
 checkHealth();
 setInterval(checkHealth,10000);
 
-// --- Training dialog ---
+// Training dialog
 trainModelBtn.addEventListener('click',function(){
 trainDialog.style.display='block';
 trainOverlay.style.display='block';
@@ -727,7 +753,6 @@ def process():
 
         is_video = ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv')
 
-        # --- Parse bboxes ---
         bboxes = None
         auto_detect = (mode == 'auto')
 
@@ -744,40 +769,25 @@ def process():
                         rh = int(r.get('h', 0))
                         if rw > 5 and rh > 5:
                             bboxes.append((rx, ry, rx + rw, ry + rh))
-                    if bboxes:
-                        logger.info(f"Manual mode: {len(bboxes)} bbox(es) from {len(rois)} ROIs: {bboxes}")
-                        auto_detect = False  # Force manual, never fallback to auto
-                    else:
-                        # No valid ROIs - return error, don't silently fallback
-                        logger.warning(f"Manual mode: {len(rois)} ROIs parsed but all invalid (min 5x5)")
+                    if not bboxes:
                         return jsonify({
                             'success': False,
                             'error': 'No valid watermark regions selected. '
-                                     'Please draw a rectangle on the canvas and click "Add Region" before processing.'
+                                     'Please draw a rectangle and click "Add Region" before processing.'
                         }), 400
+                    auto_detect = False
+                    logger.info(f"Manual mode: {len(bboxes)} bbox(es)")
                 else:
-                    # Try legacy single-roi params
-                    logger.info("Manual mode: empty ROIs array, trying legacy single-roi params")
-                    rx = int(request.form.get('roi_x', 0))
-                    ry = int(request.form.get('roi_y', 0))
-                    rw = int(request.form.get('roi_w', 200))
-                    rh = int(request.form.get('roi_h', 100))
-                    if rw > 5 and rh > 5:
-                        bboxes = [(rx, ry, rx + rw, ry + rh)]
-                        auto_detect = False
-                        logger.info(f"Manual mode (legacy): single bbox {bboxes[0]}")
-                    else:
-                        return jsonify({
-                            'success': False,
-                            'error': 'No valid watermark region selected. '
-                                     'Please draw a rectangle on the canvas and click "Add Region" before processing.'
-                        }), 400
+                    return jsonify({
+                        'success': False,
+                        'error': 'No watermark regions selected. '
+                                 'Draw a rectangle on the canvas and click "Add Region".'
+                    }), 400
             except (json.JSONDecodeError, ValueError, TypeError) as e:
-                logger.warning(f"Failed to parse ROIs JSON: {e}, raw data: {rois_json[:200]}")
+                logger.warning(f"Failed to parse ROIs JSON: {e}")
                 return jsonify({
                     'success': False,
-                    'error': f'ROI data parsing failed: {str(e)}. '
-                             'Please re-draw the selection area and try again.'
+                    'error': f'ROI data parsing failed: {str(e)}. Please re-draw and try again.'
                 }), 400
 
         if is_video:
@@ -792,33 +802,36 @@ def process():
         elapsed = time.time() - start_time
         filename = os.path.basename(str(output_path))
 
-        # Build response with helpful messages
         response = {
             'success': True,
             'filename': filename,
             'time': elapsed,
         }
 
-        # Add contextual hints for auto-detect mode
         if auto_detect:
             if not engine.yolo_available and not engine.u2net_available:
-                response['warning'] = (
+                response['hint'] = (
                     'AI detection models not installed. '
-                    'Run: pip install ultralytics rembg for AI-powered watermark detection. '
                     'Manual selection mode is recommended for best results.'
                 )
             else:
                 response['hint'] = (
                     'Auto-detection completed. If the watermark was not fully removed, '
-                    'switch to Manual Selection mode for precise region selection.'
+                    'switch to Manual Selection mode.'
                 )
 
         return jsonify(response)
 
+    except ValueError as e:
+        # Expected errors: no watermark detected, empty mask, etc.
+        logger.warning("Processing failed (expected): %s", e)
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except RuntimeError as e:
+        logger.error("Processing failed (runtime): %s", e)
+        return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         logger.error("Processing failed: %s", e, exc_info=True)
         err_msg = str(e)
-        # Friendly error messages for common failures
         if 'CUDA out of memory' in err_msg or 'OutOfMemoryError' in err_msg:
             err_msg = 'GPU out of memory. Try processing a smaller video or use CPU mode.'
         elif 'Cannot open video' in err_msg:
@@ -828,9 +841,66 @@ def process():
         return jsonify({'success': False, 'error': err_msg}), 500
 
 
+@app.route('/api/preview_mask', methods=['POST'])
+def preview_mask():
+    """Generate and return a mask preview image for manual mode validation."""
+    global engine
+
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+    file = request.files['file']
+    rois_json = request.form.get('rois', '[]')
+
+    try:
+        rois = json.loads(rois_json)
+        if not rois:
+            return jsonify({'success': False, 'error': 'No regions selected'}), 400
+
+        bboxes = []
+        for r in rois:
+            rx = int(r.get('x', 0))
+            ry = int(r.get('y', 0))
+            rw = int(r.get('w', 0))
+            rh = int(r.get('h', 0))
+            if rw > 5 and rh > 5:
+                bboxes.append((rx, ry, rx + rw, ry + rh))
+
+        if not bboxes:
+            return jsonify({'success': False, 'error': 'No valid regions'}), 400
+
+        if engine is None:
+            engine = get_engine()
+
+        # Read image
+        from PIL import Image
+        import numpy as np
+        img = Image.open(file.stream).convert('RGB')
+        image_np = np.array(img)
+
+        # Generate preview
+        preview = engine.preview_mask(image_np, bboxes)
+
+        # Save preview
+        preview_path = CACHE_DIR / f"mask_preview_{int(time.time())}.png"
+        import cv2
+        cv2.imwrite(str(preview_path), cv2.cvtColor(preview, cv2.COLOR_RGB2BGR))
+
+        return jsonify({
+            'success': True,
+            'preview_url': f'/api/download/{preview_path.name}'
+        })
+
+    except Exception as e:
+        logger.error(f"Mask preview failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/download/<path:filename>')
 def download(filename):
     file_path = OUTPUT_DIR / filename
+    if not file_path.exists():
+        file_path = CACHE_DIR / filename
     if not file_path.exists():
         return jsonify({'success': False, 'error': 'File not found'}), 404
     return send_file(str(file_path), as_attachment=True)
@@ -842,7 +912,6 @@ def download(filename):
 
 @app.route('/api/train', methods=['POST'])
 def train_model_api():
-    """Start model training in background thread."""
     data = request.json or {}
     mode = data.get('mode', 'text')
     text = data.get('text', 'AI Generated')
@@ -854,7 +923,6 @@ def train_model_api():
 
     def train_thread():
         try:
-            # Write start marker to training log
             with open(TRAIN_LOG_PATH, 'w', encoding='utf-8') as f:
                 f.write(f"=== Training started at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
                 f.write(f"Mode: {mode}, Text: {text}, Epochs: {epochs}, Images: {num}\n")
@@ -870,7 +938,7 @@ def train_model_api():
                 "--epochs", str(epochs),
                 "--num", str(num),
                 "--bg_dir", str(DATASET_DIR / "backgrounds"),
-                "--no_reload"  # We reload manually after training
+                "--no_reload"
             ]
             proc = subprocess.Popen(
                 cmd,
@@ -888,7 +956,6 @@ def train_model_api():
             if proc.returncode == 0:
                 with open(TRAIN_LOG_PATH, 'a', encoding='utf-8') as f:
                     f.write(f"\n=== [SUCCESS] Training pipeline completed at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
-                # Reload model after successful training
                 if engine:
                     engine.load_detector()
                     logger.info("Model reloaded after successful training")
@@ -907,7 +974,6 @@ def train_model_api():
 
 @app.route('/api/reload_model', methods=['POST'])
 def reload_model():
-    """Reload detector model without restarting the server."""
     try:
         if engine:
             ok = engine.load_detector()
@@ -925,11 +991,9 @@ def reload_model():
 
 @app.route('/api/train_status')
 def train_status():
-    """Return training log for progress monitoring."""
     if TRAIN_LOG_PATH.exists():
         with open(TRAIN_LOG_PATH, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-        # Return last 50 lines
         recent = lines[-50:] if len(lines) > 50 else lines
         log_text = ''.join(recent)
         is_done = 'SUCCESS' in log_text or 'ERROR' in log_text or 'failed' in log_text.lower()
@@ -940,22 +1004,19 @@ def train_status():
 def _try_open_browser(url: str):
     try:
         if webbrowser.open(url):
-            logger.info("Browser opened via webbrowser.open")
             return True
-    except Exception as e:
-        logger.warning(f"webbrowser.open failed: {e}")
+    except Exception:
+        pass
     try:
         os.startfile(url)
-        logger.info("Browser opened via os.startfile")
         return True
-    except Exception as e:
-        logger.warning(f"os.startfile failed: {e}")
+    except Exception:
+        pass
     try:
         subprocess.Popen(['cmd', '/c', 'start', url], shell=True)
-        logger.info("Browser opened via subprocess")
         return True
-    except Exception as e:
-        logger.warning(f"subprocess failed: {e}")
+    except Exception:
+        pass
     return False
 
 
@@ -986,7 +1047,7 @@ def init_engine():
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("Watermark Remover - AI Inpainting Server v11.0")
+    print("Watermark Remover - AI Inpainting Server v12.0")
     print("=" * 60)
     print(f"Python: {sys.version.split()[0]}")
     print(f"PyTorch: {torch.__version__}")

@@ -1,6 +1,6 @@
 """
-Core Inpainting Engine - Orchestration layer for modular pipeline
-Version 11.0 - Poisson blending, KCF tracking, EMA temporal smoothing
+Core Inpainting Engine - Three-stage pipeline orchestration.
+Version 12.0 - Detection -> Mask -> Inpaint -> Blend. Strict error handling.
 """
 import os
 import sys
@@ -12,58 +12,50 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Union
 import torch
 import cv2
+import yaml
 
-# KCF tracker compatibility: OpenCV 4.5+ moved tracking to cv2.legacy
-def _create_kcf_tracker():
-    """Create KCF tracker with OpenCV version compatibility."""
-    for factory in [
-        lambda: cv2.legacy.TrackerKCF_create(),
-        lambda: cv2.TrackerKCF_create(),
-    ]:
-        try:
-            return factory()
-        except (AttributeError, cv2.error):
-            continue
-    return None
-
-LOG_DIR = Path(r"D:\AI\watermark_remover\logs")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger('engine')
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    file_handler = logging.FileHandler(LOG_DIR / 'engine.log', encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
 
-MODEL_DIR = Path(r"D:\AI\watermark_remover\models")
-CACHE_DIR = Path(r"D:\AI\watermark_remover\cache")
-OUTPUT_DIR = Path(r"D:\AI\watermark_remover\output")
+# Load config
+def _load_config():
+    cfg_path = Path(r"D:\AI\watermark_remover\config.yaml")
+    if cfg_path.exists():
+        with open(cfg_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    return {}
+
+CONFIG = _load_config()
+PATH_CFG = CONFIG.get("paths", {})
+VIDEO_CFG = CONFIG.get("video", {})
+
+MODEL_DIR = Path(PATH_CFG.get("models_dir", r"D:\AI\watermark_remover\models"))
+CACHE_DIR = Path(PATH_CFG.get("cache_dir", r"D:\AI\watermark_remover\cache"))
+OUTPUT_DIR = Path(PATH_CFG.get("output_dir", r"D:\AI\watermark_remover\output"))
 for d in [MODEL_DIR, CACHE_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
+
+REDETECT_INTERVAL = VIDEO_CFG.get("redetect_interval", 10)
+TEMPORAL_ALPHA = VIDEO_CFG.get("temporal_alpha", 0.2)
+SCENE_CHANGE_THRESHOLD = VIDEO_CFG.get("scene_change_threshold", 30.0)
 
 
 class InpaintingEngine:
     """
     Image/video watermark removal engine.
-    v11.0: Modular architecture - uses Inpainter, Segmenter, Detector sub-modules.
+    v12.0: Three-stage pipeline - detect -> mask -> inpaint -> blend.
     """
 
     def __init__(self, device: str = 'auto'):
         self.device = self._get_device(device)
-        # Sub-modules (lazy-loaded)
         self.inpainter = None
         self.segmenter = None
         self.detector = None
-        # Module status
         self.inpainter_loaded = False
         self.segmenter_loaded = False
         self.detector_loaded = False
-        self.u2net_available = False
         self.yolo_available = False
-        logger.info(f"Engine v11.0 initialized on device: {self.device}")
+        self.u2net_available = False
+        logger.info(f"Engine v12.0 initialized on device: {self.device}")
 
     def _get_device(self, device: str) -> torch.device:
         if device == 'auto':
@@ -81,11 +73,10 @@ class InpaintingEngine:
         return torch.device(device)
 
     # ================================================================
-    # Module Loading (lazy)
+    # Module Loading
     # ================================================================
 
     def load_inpainter(self) -> bool:
-        """Load Inpainter module (LaMa + optional SDXL)."""
         try:
             from core.inpainter import Inpainter
             self.inpainter = Inpainter(device=self.device)
@@ -99,7 +90,6 @@ class InpaintingEngine:
             return False
 
     def load_segmenter(self) -> bool:
-        """Load Segmenter module (SAM2/MobileSAM + GrabCut)."""
         try:
             from core.segmenter import Segmenter
             self.segmenter = Segmenter(device=self.device)
@@ -111,28 +101,25 @@ class InpaintingEngine:
             return False
 
     def load_detector(self) -> bool:
-        """Load Detector module (YOLO + U2-Net + CV)."""
         try:
             from core.detector import WatermarkDetector
             self.detector = WatermarkDetector(device=str(self.device))
             self.detector_loaded = True
 
-            # Try YOLO first (primary)
             yolo_ok = self.detector.load_yolo()
             self.yolo_available = yolo_ok
 
-            # Try U2-Net (secondary)
             u2_ok = self.detector.load_u2net()
             self.u2net_available = u2_ok
 
             if yolo_ok and u2_ok:
-                logger.info("[OK] Detector: YOLO + U2-Net + CV")
+                logger.info("[OK] Detector: YOLO + U2-Net")
             elif yolo_ok:
-                logger.info("[OK] Detector: YOLO + CV")
+                logger.info("[OK] Detector: YOLO only")
             elif u2_ok:
-                logger.info("[OK] Detector: U2-Net + CV")
+                logger.info("[OK] Detector: U2-Net only")
             else:
-                logger.info("[OK] Detector: CV-only (install ultralytics/rembg for AI)")
+                logger.warning("[WARN] Detector: No AI models available. Manual mode only.")
             return True
         except Exception as e:
             logger.warning(f"[WARN] Detector import failed: {e}")
@@ -140,7 +127,6 @@ class InpaintingEngine:
             return False
 
     def load_model(self) -> bool:
-        """Load all modules. Returns True if at least Inpainter is loaded."""
         ok = self.load_inpainter()
         if not ok:
             return False
@@ -149,7 +135,6 @@ class InpaintingEngine:
         return True
 
     def _ensure_modules(self):
-        """Ensure required modules are loaded. Raises RuntimeError if not."""
         if not self.inpainter_loaded:
             if not self.load_inpainter():
                 raise RuntimeError(
@@ -191,223 +176,44 @@ class InpaintingEngine:
             cv2.imwrite(save_path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
     # ================================================================
-    # Mask Generation (delegates to Segmenter)
-    # ================================================================
-
-    def _create_mask_from_bboxes(self, image_shape: Tuple[int, int],
-                                  bboxes: List[Tuple[int, int, int, int]],
-                                  feather: int = 12,
-                                  image: np.ndarray = None) -> np.ndarray:
-        """
-        Guaranteed mask generation from bounding boxes. Never returns empty mask
-        when valid bboxes are provided. No dependency on external modules.
-        """
-        h, w = image_shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
-        for bbox in bboxes:
-            x1, y1, x2, y2 = bbox
-            x1 = max(0, int(x1))
-            y1 = max(0, int(y1))
-            x2 = min(w, int(x2))
-            y2 = min(h, int(y2))
-            if x2 > x1 and y2 > y1:
-                mask[y1:y2, x1:x2] = 255
-
-        if np.max(mask) == 0:
-            return mask
-
-        # Simple dilation + Gaussian feather (always works, no external deps)
-        ksize = max(6, feather)
-        if ksize % 2 == 0:
-            ksize += 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
-        mask = cv2.dilate(mask, kernel, iterations=1)
-        gauss_ksize = feather * 2 + 1
-        if gauss_ksize % 2 == 0:
-            gauss_ksize += 1
-        mask = cv2.GaussianBlur(mask, (gauss_ksize, gauss_ksize), feather // 2)
-        return mask
-
-    def _merge_regions(self, regions: List[Tuple[int, int, int, int]],
-                       w: int, h: int) -> List[Tuple[int, int, int, int]]:
-        """Merge overlapping/nearby bounding boxes."""
-        if not regions:
-            return []
-        regions = sorted(regions, key=lambda r: (r[0], r[1]))
-        merged = []
-        for r in regions:
-            if not merged:
-                merged.append(list(r))
-                continue
-            last = merged[-1]
-            x1, y1, x2, y2 = r
-            lx1, ly1, lx2, ly2 = last
-            gap = 20
-            near = not (x2 + gap < lx1 or x1 > lx2 + gap or y2 + gap < ly1 or y1 > ly2 + gap)
-            if near:
-                last[0] = min(lx1, x1); last[1] = min(ly1, y1)
-                last[2] = max(lx2, x2); last[3] = max(ly2, y2)
-            else:
-                merged.append(list(r))
-        return [tuple(r) for r in merged]
-
-    # ================================================================
-    # Watermark Detection (delegates to Detector)
+    # Three-Stage Pipeline: Detect -> Mask -> Inpaint -> Blend
     # ================================================================
 
     def _detect_watermark_auto(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
-        Multi-strategy watermark detection.
-        YOLO-first (conf=0.25). Falls back to CV emergency detection when YOLO fails,
-        ensuring video auto mode almost never returns empty.
+        Auto-detect watermarks using YOLO + saliency fallback.
+        Raises ValueError if no watermark is found.
         """
-        if self.detector is not None and self.detector_loaded:
-            try:
-                logger.info("Running YOLO watermark detection...")
-                regions = self.detector.detect_watermarks(
-                    image, use_ai=True, use_cv_fallback=False
-                )
-                if regions:
-                    logger.info(f"Detector found {len(regions)} watermark regions")
-                    return regions
-            except Exception as e:
-                logger.warning(f"Detector failed: {e}")
+        if self.detector is None or not self.detector_loaded:
+            raise RuntimeError("Detector not loaded. Cannot auto-detect watermarks.")
 
-        # YOLO found nothing - try emergency CV detection with strict texture filtering
-        if self.detector is not None and self.detector_loaded:
-            logger.warning("YOLO found nothing, trying emergency CV detection...")
-            try:
-                cv_regions = self.detector.detect_watermarks(
-                    image, use_ai=False, use_cv_fallback=True
-                )
-                if cv_regions:
-                    from core.detector import WatermarkDetector
-                    cv_regions = WatermarkDetector._filter_texture_regions(
-                        image, cv_regions, max_lap_var=500
-                    )
-                    if cv_regions:
-                        logger.info(f"Emergency CV found {len(cv_regions)} regions")
-                        return cv_regions[:3]
-            except Exception as e:
-                logger.warning(f"Emergency CV detection failed: {e}")
-
-        logger.warning("All detection strategies failed. "
-                       "Try manual selection mode for best results.")
-        return []
-
-    def _detect_watermark_cv_fallback(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
-        """Inline CV fallback detection (used when Detector is unavailable)."""
-        h, w = image.shape[:2]
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        all_boxes = []
-
-        corner_cfgs = [
-            ("top-left",     0.0,  0.0,  0.30, 0.15, 110, 80,  15, 5,  6,  3),
-            ("top-right",    0.70, 0.0,  1.0,  0.15, 110, 80,  15, 5,  6,  3),
-            ("bottom-left",  0.0,  0.85, 0.30, 1.0,  110, 80,  15, 5,  6,  3),
-            ("bottom-right", 0.48, 0.83, 1.0,  1.0,  125, 200, 30, 5, 20, 6),
-        ]
-        for name, xs, ys, xe, ye, thresh, min_a, min_w, min_h, kw, kh in corner_cfgs:
-            x1_r = int(w * xs); y1_r = int(h * ys)
-            x2_r = int(w * xe); y2_r = int(h * ye)
-            if x2_r <= x1_r or y2_r <= y1_r:
-                continue
-            region_gray = gray[y1_r:y2_r, x1_r:x2_r]
-            if region_gray.size == 0:
-                continue
-            mean_val = np.mean(region_gray)
-            if mean_val < 30 or mean_val > 235:
-                continue
-            _, binary = cv2.threshold(region_gray, thresh, 255, cv2.THRESH_BINARY)
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
-            closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-            contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                rx, ry, rbw, rbh = cv2.boundingRect(cnt)
-                if area < min_a or rbw < min_w or rbh < min_h:
-                    continue
-                if rbw / max(rbh, 1) < 1.0:
-                    continue
-                region_area = (x2_r - x1_r) * (y2_r - y1_r)
-                if area > region_area * 0.5:
-                    continue
-                pad_w = int(rbw * 0.25) + 12
-                pad_h = int(rbh * 0.4) + 10
-                bx1 = max(0, x1_r + rx - pad_w)
-                by1 = max(0, y1_r + ry - pad_h)
-                bx2 = min(w, x1_r + rx + rbw + pad_w)
-                by2 = min(h, y1_r + ry + rbh + pad_h)
-                all_boxes.append((bx1, by1, bx2, by2))
-
-        if not all_boxes:
-            logger.info("Auto-detect: no watermark regions found")
-            return []
-
-        all_boxes = [(max(0, b[0]), max(0, b[1]), min(w, b[2]), min(h, b[3])) for b in all_boxes]
-        all_boxes = [b for b in all_boxes if (b[2] - b[0]) > 8 and (b[3] - b[1]) > 4]
-        if not all_boxes:
-            return []
-
-        regions = self._merge_regions(all_boxes, w, h)
-        if len(regions) > 10:
-            regions.sort(key=lambda r: (r[2] - r[0]) * (r[3] - r[1]), reverse=True)
-            regions = regions[:10]
-
-        total_area = sum((x2 - x1) * (y2 - y1) for x1, y1, x2, y2 in regions)
-        max_area = w * h * 0.15
-        if total_area > max_area:
-            regions.sort(key=lambda r: (r[2] - r[0]) * (r[3] - r[1]), reverse=True)
-            filtered = []
-            cur_area = 0
-            for r in regions:
-                a = (r[2] - r[0]) * (r[3] - r[1])
-                # Always keep at least the first (largest) region
-                if not filtered or cur_area + a <= max_area:
-                    filtered.append(r)
-                    cur_area += a
-                else:
-                    break
-            regions = filtered
-
-        logger.info(f"CV-fallback detected {len(regions)} watermark regions")
+        regions = self.detector.detect_watermarks(image, use_yolo=True, use_saliency=True)
+        if not regions:
+            raise ValueError(
+                "No watermark detected. Please use Manual Selection mode "
+                "to draw the watermark region on the canvas."
+            )
+        logger.info(f"Auto-detected {len(regions)} watermark regions")
         return regions
 
-    # ================================================================
-    # Inpainting (delegates to Inpainter)
-    # ================================================================
+    def _process_image_pipeline(self, image: np.ndarray,
+                                 bboxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
+        """
+        Execute the three-stage pipeline on a single image.
+        Returns the final blended result.
+        """
+        # Stage 1: Generate mask
+        if not self.segmenter or not self.segmenter_loaded:
+            raise RuntimeError("Segmenter not loaded")
+        mask = self.segmenter.generate_mask(image, bboxes)
 
-    def _run_inpaint(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """Run inpainting via Inpainter module."""
-        if self.inpainter_loaded:
-            return self.inpainter.inpaint_lama(image, mask)
-        else:
-            raise RuntimeError("Inpainter not loaded")
+        # Stage 2: Inpaint
+        inpainted = self.inpainter.inpaint(image, mask)
 
-    def _blend_result(self, original: np.ndarray, inpainted: np.ndarray,
-                      mask: np.ndarray) -> np.ndarray:
-        """Blend inpainted result with original. Poisson > alpha blend fallback."""
-        if self.inpainter_loaded:
-            from core.inpainter import Inpainter
-            # Prioritize Poisson blending for seamless boundaries
-            try:
-                return Inpainter.poisson_blend(original, inpainted, mask)
-            except Exception as e:
-                logger.warning(f"Poisson blend failed: {e}, using alpha blend")
-                return Inpainter.blend(original, inpainted, mask)
-        # Fallback blending
-        orig_h, orig_w = original.shape[:2]
-        inh, inw = inpainted.shape[:2]
-        if (inh, inw) != (orig_h, orig_w):
-            inpainted = cv2.resize(inpainted, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
-        mh, mw = mask.shape[:2]
-        if (mh, mw) != (orig_h, orig_w):
-            mask = cv2.resize(mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-        mask_float = mask.astype(np.float32) / 255.0
-        mask_soft = cv2.GaussianBlur(mask_float, (5, 5), 1.5)
-        mask_3ch = np.stack([mask_soft] * 3, axis=2)
-        final = inpainted.astype(np.float32) * mask_3ch + original.astype(np.float32) * (1 - mask_3ch)
-        return np.clip(final, 0, 255).astype(np.uint8)
+        # Stage 3: Blend
+        from core.inpainter import Inpainter
+        final = Inpainter.blend(image, inpainted, mask)
+        return final
 
     # ================================================================
     # Image Inpainting
@@ -416,23 +222,23 @@ class InpaintingEngine:
     def inpaint_image(self,
                       image_path: str,
                       output_path: Optional[str] = None,
-                      mask_path: Optional[str] = None,
                       bboxes: Optional[List[Tuple[int, int, int, int]]] = None,
-                      auto_detect: bool = False,
-                      feather: int = 12) -> str:
+                      auto_detect: bool = False) -> str:
         """
         Inpaint a single image.
 
         Args:
             image_path: Path to input image
             output_path: Output path (auto-generated if None)
-            mask_path: Optional pre-made mask image
             bboxes: List of (x1, y1, x2, y2) bounding boxes for manual mode
             auto_detect: Whether to auto-detect watermarks
-            feather: Feather radius for mask edges
 
         Returns:
             Path to output image
+
+        Raises:
+            ValueError: If no watermark is detected in auto mode
+            RuntimeError: If required modules are not loaded
         """
         self._ensure_modules()
         logger.info(f"Processing image: {image_path}")
@@ -441,46 +247,22 @@ class InpaintingEngine:
         image = self._load_image(image_path)
         h, w = image.shape[:2]
 
-        # --- Build mask ---
-        if mask_path and os.path.exists(mask_path):
-            logger.info(f"Using pre-generated mask: {mask_path}")
-            mask = self._load_image(mask_path)
-            if len(mask.shape) == 3:
-                mask = cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
-        else:
-            mask_masks = []
-            # Manual mode: use smaller feather for precise small-region selection
-            manual_feather = 6 if bboxes else feather
+        # Determine bboxes
+        if auto_detect:
+            detected = self._detect_watermark_auto(image)
             if bboxes:
-                mask_masks.append(self._create_mask_from_bboxes((h, w), bboxes, manual_feather))
-            if auto_detect:
-                detected = self._detect_watermark_auto(image)
-                if not detected:
-                    logger.warning("Auto-detect found NO watermark regions. Returning original image.")
-                    logger.warning("Tip: Try manual selection mode, or install rembg/ultralytics for AI detection.")
-                else:
-                    mask_masks.append(self._create_mask_from_bboxes((h, w), detected, feather))
-            if mask_masks:
-                mask = np.clip(np.maximum.reduce(mask_masks), 0, 255).astype(np.uint8)
+                bboxes = bboxes + detected
             else:
-                mask = np.zeros((h, w), dtype=np.uint8)
+                bboxes = detected
 
-        # --- Empty mask check ---
-        if np.max(mask) < 10:
-            logger.warning("Mask is empty - returning original image unchanged.")
-            if output_path is None:
-                output_path = str(OUTPUT_DIR / f"result_{Path(image_path).stem}.png")
-            self._save_image(image, output_path)
-            return output_path
+        if not bboxes:
+            raise ValueError(
+                "No watermark regions specified. "
+                "Provide bboxes or enable auto_detect."
+            )
 
-        mask_pixels = np.sum(mask > 10)
-        logger.info(f"Mask has {mask_pixels} pixels to inpaint ({mask_pixels / (w * h) * 100:.1f}% of image)")
-
-        # --- Inpaint + Blend ---
-        logger.info("Running LaMa inpainting...")
-        result_np = self._run_inpaint(image, mask)
-        final_np = self._blend_result(image, result_np, mask)
-        logger.info("Inpainting completed successfully")
+        # Run pipeline
+        final_np = self._process_image_pipeline(image, bboxes)
 
         if output_path is None:
             output_path = str(OUTPUT_DIR / f"result_{Path(image_path).stem}.png")
@@ -518,6 +300,15 @@ class InpaintingEngine:
                 continue
         raise RuntimeError("Cannot create video writer with any available codec")
 
+    def _scene_changed(self, prev_frame: Optional[np.ndarray],
+                       curr_frame: np.ndarray) -> bool:
+        """Detect scene change via frame difference."""
+        if prev_frame is None:
+            return True
+        diff = cv2.absdiff(prev_frame, curr_frame)
+        mean_diff = np.mean(diff)
+        return mean_diff > SCENE_CHANGE_THRESHOLD
+
     def inpaint_video(self,
                       video_path: str,
                       output_path: Optional[str] = None,
@@ -527,19 +318,11 @@ class InpaintingEngine:
                       end_frame: Optional[int] = None,
                       progress_callback=None) -> str:
         """
-        Inpaint video watermarks frame by frame with tracking re-detection.
+        Inpaint video watermarks frame by frame.
+        Auto mode: re-detects every REDETECT_INTERVAL frames.
+        Manual mode: uses static mask from bboxes.
 
-        Args:
-            video_path: Path to input video
-            output_path: Output path (auto-generated if None)
-            bboxes: Manual bounding boxes (static mask mode)
-            auto_detect: Auto-detect watermark (re-detects every 30 frames)
-            start_frame: Start frame index
-            end_frame: End frame index (None = all frames)
-            progress_callback: Optional callback(percent) for progress
-
-        Returns:
-            Path to output video
+        Raises ValueError if auto-detect fails on first frame.
         """
         self._ensure_modules()
         logger.info(f"Processing video: {video_path}")
@@ -567,74 +350,25 @@ class InpaintingEngine:
 
         writer, final_output = self._create_video_writer(output_path, fps, width, height)
 
-        if self.detector is None and auto_detect:
-            self.load_detector()
-
-        # --- Determine mask strategy ---
+        # Determine mask strategy
         use_static_mask = (bboxes is not None and not auto_detect)
-        re_detect_interval = 60  # Extended: KCF tracker bridges the gap
-
-        first_frame_mask = None
-        tracker = None
-        tracker_bbox = None  # (x, y, w, h) for KCF
-        prev_frame_rgb = None  # For EMA temporal smoothing
+        current_mask = None
+        prev_frame_gray = None
+        prev_result = None
+        failed_frames = 0
 
         if use_static_mask:
-            first_frame_mask = self._create_mask_from_bboxes((height, width), bboxes, feather=6)
-            if np.max(first_frame_mask) > 10:
-                logger.info(f"Static mask: {np.sum(first_frame_mask > 30)} pixels")
-            else:
-                logger.warning("Static mask is empty - all frames will be written as-is")
+            if not self.segmenter or not self.segmenter_loaded:
+                raise RuntimeError("Segmenter not loaded")
+            # Pre-generate static mask from bboxes
+            dummy_image = np.zeros((height, width, 3), dtype=np.uint8)
+            current_mask = self.segmenter.generate_mask(dummy_image, bboxes)
+            if np.max(current_mask) <= 10:
+                raise ValueError("Generated mask is empty. Check bbox coordinates.")
+            logger.info(f"Static mask: {np.sum(current_mask > 30)} pixels")
 
-        # --- Multi-frame first-frame detection (auto mode) ---
-        # Scan first 5 frames to find the best watermark region, avoiding
-        # single-frame detection failure aborting the entire video.
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        if auto_detect and not use_static_mask:
-            best_area = 0
-            best_bbox = None
-            best_frame_rgb = None
-            scan_frames = min(5, end_frame - start_frame)
-            for scan_i in range(scan_frames):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                detected = self._detect_watermark_auto(frame_rgb)
-                if detected:
-                    for bbox in detected:
-                        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-                        if area > best_area:
-                            best_area = area
-                            best_bbox = bbox
-                            best_frame_rgb = frame_rgb.copy()
-            # Reset to start frame after scanning
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            if best_bbox:
-                first_frame_mask = self._create_mask_from_bboxes(
-                    (height, width), [best_bbox], feather=12
-                )
-                # Initialize KCF tracker from the best detection
-                try:
-                    x1, y1, x2, y2 = best_bbox
-                    tracker = _create_kcf_tracker()
-                    if tracker is not None:
-                        tracker.init(best_frame_rgb, (x1, y1, x2 - x1, y2 - y1))
-                        logger.info(f"KCF tracker initialized from multi-frame scan: "
-                                    f"({x1},{y1},{x2-x1},{y2-y1}) area={best_area}")
-                    else:
-                        logger.warning("KCF tracker unavailable (OpenCV contrib/legacy not installed)")
-                except Exception as e:
-                    logger.warning(f"KCF tracker init failed: {e}")
-                    tracker = None
-                logger.info(f"Initial watermark mask from {scan_frames}-frame scan: "
-                            f"{np.sum(first_frame_mask > 30)} pixels")
-            else:
-                logger.warning(f"No watermark detected in first {scan_frames} frames. "
-                               "Video will be written as-is. Try manual selection mode.")
-
         frame_idx = start_frame
-        failed_frames = 0
 
         while frame_idx < end_frame:
             ret, frame = cap.read()
@@ -643,117 +377,60 @@ class InpaintingEngine:
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # --- Dynamic mask update (auto-detect + KCF tracking) ---
+            # Auto-detect: re-detect periodically or on scene change
             if auto_detect and not use_static_mask:
-                if first_frame_mask is None or frame_idx % re_detect_interval == 0:
-                    detected = self._detect_watermark_auto(frame_rgb)
-                    if detected and len(detected) > 0:
-                        new_mask = self._create_mask_from_bboxes((height, width), detected)
-                        if np.max(new_mask) > 10:
-                            first_frame_mask = new_mask
-                            # Initialize KCF tracker from first detection bbox
-                            if tracker is None:
-                                try:
-                                    x1, y1, x2, y2 = detected[0]
-                                    tracker_bbox = (x1, y1, x2 - x1, y2 - y1)
-                                    tracker = _create_kcf_tracker()
-                                    if tracker is not None:
-                                        tracker.init(frame_rgb, tracker_bbox)
-                                        logger.info(f"KCF tracker initialized: {tracker_bbox}")
-                                    else:
-                                        logger.warning("KCF tracker unavailable (OpenCV contrib/legacy not installed)")
-                                except Exception as e:
-                                    logger.warning(f"KCF tracker init failed: {e}")
-                                    tracker = None
-                            if frame_idx == start_frame:
-                                logger.info(f"Initial watermark mask: {np.sum(new_mask > 30)} pixels")
-                            else:
-                                logger.info(f"Re-detected watermark at frame {frame_idx}")
-                    elif tracker is not None:
-                        # Detection failed but tracker may still work
-                        logger.info(f"Re-detection failed at frame {frame_idx}, relying on tracker")
-                elif tracker is not None:
-                    # Use KCF tracker to update mask position between re-detections
+                frame_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+                need_detect = (
+                    frame_idx == start_frame or
+                    frame_idx % REDETECT_INTERVAL == 0 or
+                    self._scene_changed(prev_frame_gray, frame_gray)
+                )
+                if need_detect:
                     try:
-                        success, updated_bbox = tracker.update(frame_rgb)
-                        if success:
-                            x, y, w, h = [int(v) for v in updated_bbox]
-                            # Expand bbox slightly to cover watermark edges
-                            pad = 10
-                            current_bbox = (
-                                max(0, x - pad), max(0, y - pad),
-                                min(width, x + w + pad), min(height, y + h + pad)
-                            )
-                            first_frame_mask = self._create_mask_from_bboxes(
-                                (height, width), [current_bbox], feather=12
-                            )
-                        else:
-                            logger.info(f"KCF tracker lost at frame {frame_idx}, re-detecting immediately")
-                            tracker = None
-                            # Immediate re-detection: don't wait for re_detect_interval
-                            detected = self._detect_watermark_auto(frame_rgb)
-                            if detected and len(detected) > 0:
-                                best_bbox = max(detected, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
-                                first_frame_mask = self._create_mask_from_bboxes(
-                                    (height, width), [best_bbox], feather=12
-                                )
-                                try:
-                                    x1, y1, x2, y2 = best_bbox
-                                    tracker = _create_kcf_tracker()
-                                    if tracker is not None:
-                                        tracker.init(frame_rgb, (x1, y1, x2 - x1, y2 - y1))
-                                        logger.info(f"KCF re-initialized at frame {frame_idx}: "
-                                                    f"({x1},{y1},{x2-x1},{y2-y1})")
-                                    else:
-                                        logger.warning("KCF tracker unavailable (OpenCV contrib/legacy not installed)")
-                                except Exception as e2:
-                                    logger.warning(f"KCF re-init failed: {e2}")
-                    except Exception as e:
-                        logger.warning(f"KCF tracker update failed: {e}")
-                        tracker = None
-                        # Immediate re-detection on error too
                         detected = self._detect_watermark_auto(frame_rgb)
-                        if detected and len(detected) > 0:
-                            best_bbox = max(detected, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
-                            first_frame_mask = self._create_mask_from_bboxes(
-                                (height, width), [best_bbox], feather=12
+                        if not self.segmenter or not self.segmenter_loaded:
+                            raise RuntimeError("Segmenter not loaded")
+                        current_mask = self.segmenter.generate_mask(frame_rgb, detected)
+                        if frame_idx == start_frame:
+                            logger.info(f"Initial mask: {np.sum(current_mask > 30)} pixels")
+                        else:
+                            logger.info(f"Re-detected at frame {frame_idx}")
+                    except ValueError:
+                        # Detection failed, keep previous mask if any
+                        if current_mask is None:
+                            raise ValueError(
+                                f"No watermark detected in first frames of video. "
+                                "Try manual selection mode."
                             )
-                            try:
-                                x1, y1, x2, y2 = best_bbox
-                                tracker = _create_kcf_tracker()
-                                if tracker is not None:
-                                    tracker.init(frame_rgb, (x1, y1, x2 - x1, y2 - y1))
-                                else:
-                                    logger.warning("KCF tracker unavailable (OpenCV contrib/legacy not installed)")
-                            except Exception as e2:
-                                logger.warning(f"KCF re-init after error failed: {e2}")
+                        logger.info(f"Re-detection failed at frame {frame_idx}, using previous mask")
+                prev_frame_gray = frame_gray
 
-            # --- Inpaint or pass-through ---
-            if first_frame_mask is not None and np.max(first_frame_mask) > 10:
+            # Inpaint or pass-through
+            if current_mask is not None and np.max(current_mask) > 10:
                 try:
-                    result_np = self._run_inpaint(frame_rgb, first_frame_mask)
-                    final_np = self._blend_result(frame_rgb, result_np, first_frame_mask)
+                    # Use current_mask directly with inpainter + blend
+                    inpainted = self.inpainter.inpaint(frame_rgb, current_mask)
+                    from core.inpainter import Inpainter
+                    result_np = Inpainter.blend(frame_rgb, inpainted, current_mask)
+                    # Temporal EMA smoothing
+                    if prev_result is not None:
+                        result_np = (result_np.astype(np.float32) * TEMPORAL_ALPHA +
+                                     prev_result.astype(np.float32) * (1 - TEMPORAL_ALPHA))
+                        result_np = np.clip(result_np, 0, 255).astype(np.uint8)
+                    prev_result = result_np.copy()
 
-                    # Temporal EMA smoothing: reduce flicker across consecutive frames
-                    if prev_frame_rgb is not None:
-                        alpha = 0.3  # EMA weight for new frame
-                        final_np = (final_np.astype(np.float32) * alpha +
-                                    prev_frame_rgb.astype(np.float32) * (1 - alpha))
-                        final_np = np.clip(final_np, 0, 255).astype(np.uint8)
-                    prev_frame_rgb = final_np.copy()
-
-                    final_bgr = cv2.cvtColor(final_np, cv2.COLOR_RGB2BGR)
+                    final_bgr = cv2.cvtColor(result_np, cv2.COLOR_RGB2BGR)
                     writer.write(final_bgr)
                     if not writer.isOpened():
                         raise RuntimeError(f"Video writer closed unexpectedly at frame {frame_idx}")
                 except Exception as e:
                     logger.error(f"Frame {frame_idx} inpainting failed: {e}")
-                    writer.write(frame)  # Write original frame as fallback
+                    writer.write(frame)
                     failed_frames += 1
-                    prev_frame_rgb = None  # Reset EMA on failure
+                    prev_result = None
             else:
                 writer.write(frame)
-                prev_frame_rgb = None  # Reset EMA on pass-through
+                prev_result = None
 
             frame_idx += 1
             if progress_callback:
@@ -773,6 +450,29 @@ class InpaintingEngine:
         elapsed = time.time() - start_time
         logger.info(f"[DONE] Video saved: {final_output} ({elapsed:.1f}s, {failed_frames} failed frames)")
         return final_output
+
+    # ================================================================
+    # Preview Mask (for manual mode validation)
+    # ================================================================
+
+    def preview_mask(self, image: np.ndarray,
+                     bboxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
+        """
+        Generate a mask preview image for user validation.
+        Returns an overlay image showing the mask regions.
+        """
+        if not self.segmenter or not self.segmenter_loaded:
+            self.load_segmenter()
+        if not self.segmenter:
+            raise RuntimeError("Segmenter not loaded")
+
+        mask = self.segmenter.generate_mask(image, bboxes)
+
+        # Create overlay: red tint on mask regions
+        overlay = image.copy()
+        mask_bin = (mask > 30).astype(np.uint8)
+        overlay[mask_bin > 0] = overlay[mask_bin > 0] * 0.5 + np.array([255, 0, 0]) * 0.5
+        return overlay.astype(np.uint8)
 
 
 # ================================================================
@@ -794,11 +494,11 @@ def get_engine(device: str = 'auto') -> InpaintingEngine:
                 "Please check network or run: pip install simple-lama-inpainting"
             )
         if _engine_instance.yolo_available and _engine_instance.u2net_available:
-            logger.info("Engine ready: LaMa + YOLO + U2-Net + CV")
+            logger.info("Engine ready: LaMa + YOLO + U2-Net")
         elif _engine_instance.yolo_available:
-            logger.info("Engine ready: LaMa + YOLO + CV")
+            logger.info("Engine ready: LaMa + YOLO")
         elif _engine_instance.u2net_available:
-            logger.info("Engine ready: LaMa + U2-Net + CV")
+            logger.info("Engine ready: LaMa + U2-Net")
         else:
-            logger.info("Engine ready: LaMa + CV-only (install rembg/ultralytics for AI)")
+            logger.info("Engine ready: LaMa only (manual mode)")
     return _engine_instance

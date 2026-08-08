@@ -1,0 +1,38 @@
+﻿# Watermark Remover - Centralized Configuration
+# All pipeline parameters are managed here for consistency.
+
+detect:
+  yolo_model: "models/watermark_yolo.pt"
+  conf: 0.25
+  fallback_saliency: true
+  texture_lap_var_max: 500.0
+  multi_frame_confirm: 2
+
+mask:
+  feather: 6
+  dilate_kernel: 5
+  dilate_iter: 2
+  grabcut_iter: 2
+  min_mask_pixels: 100
+
+inpaint:
+  lama_resize_threshold: 1024
+
+blend:
+  blur_ksize: 21
+  edge_filter_ksize: 3
+
+video:
+  redetect_interval: 10
+  temporal_alpha: 0.2
+  scene_change_threshold: 30.0
+
+paths:
+  project_root: "D:/AI/watermark_remover"
+  models_dir: "D:/AI/watermark_remover/models"
+  output_dir: "D:/AI/watermark_remover/output"
+  upload_dir: "D:/AI/watermark_remover/uploads"
+  cache_dir: "D:/AI/watermark_remover/cache"
+  logs_dir: "D:/AI/watermark_remover/logs"
+  dataset_dir: "D:/AI/watermark_remover/WatermarkDataset"
+  train_python: "C:/Users/qsong/AppData/Roaming/aipy-pro/venv/Scripts/python.exe"
