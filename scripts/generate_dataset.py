@@ -1,6 +1,7 @@
 """
 scripts/generate_dataset.py - Generate YOLO training dataset with watermark text/logo.
 Version 12.0 - Chinese text watermark synthesis for YOLO training.
+OpenCV putText fallback when Chinese fonts are missing.
 
 Usage:
     python scripts/generate_dataset.py --num 2000 --output_dir ./WatermarkDataset/yolo_text --text "AI Generated"
@@ -15,12 +16,14 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Chinese font candidates
+# Chinese font candidates (Windows)
 _CHINESE_FONT_CANDIDATES = [
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/simsun.ttc",
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/msyhbd.ttc",
+    "C:/Windows/Fonts/simkai.ttf",
+    "C:/Windows/Fonts/STKAITI.TTF",
     "simhei.ttf", "simsun.ttc", "msyh.ttc",
 ]
 
@@ -30,27 +33,85 @@ for _fp in _CHINESE_FONT_CANDIDATES:
         _FONT_PATH = _fp
         break
 
+# Track if we're using fallback mode
+_FONT_FALLBACK = _FONT_PATH is None
+
 
 def generate_text_watermark(text: str, size: int, font_path: str = None) -> np.ndarray:
     """Generate transparent PNG with watermark text. Returns RGBA numpy array."""
     fp = font_path or _FONT_PATH
-    try:
-        font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default()
-    except Exception:
-        font = ImageFont.load_default()
+    use_pil_font = True
 
-    temp_img = Image.new('RGBA', (size * len(text) * 2, size * 2), (0, 0, 0, 0))
-    temp_draw = ImageDraw.Draw(temp_img)
-    bbox = temp_draw.textbbox((0, 0), text, font=font)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    if w <= 0 or h <= 0:
-        w, h = size * len(text), size
+    try:
+        font = ImageFont.truetype(fp, size) if fp else None
+    except Exception:
+        font = None
+
+    if font is None:
+        # Try PIL default font
+        try:
+            font = ImageFont.load_default()
+            use_pil_font = False
+        except Exception:
+            font = None
+
+    # If PIL font is available, use it
+    if font is not None:
+        temp_img = Image.new('RGBA', (size * len(text) * 2, size * 2), (0, 0, 0, 0))
+        temp_draw = ImageDraw.Draw(temp_img)
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if w <= 0 or h <= 0:
+            w, h = size * len(text), size
+
+        pad = max(4, size // 8)
+        img = Image.new('RGBA', (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.text((pad, pad), text, font=font, fill=(255, 255, 255, 255))
+        return np.array(img)
+
+    # PIL fallback failed - use OpenCV putText
+    return generate_text_watermark_cv2(text, size)
+
+
+def generate_text_watermark_cv2(text: str, size: int) -> np.ndarray:
+    """
+    OpenCV putText fallback for watermark text generation.
+    Used when PIL fonts are unavailable (e.g., Chinese fonts missing).
+    Only supports ASCII characters; Chinese text will be replaced with
+    'WATERMARK' placeholder and a download hint is printed.
+    """
+    # Check if text contains non-ASCII characters
+    try:
+        text.encode('ascii')
+    except UnicodeEncodeError:
+        print(f"[WARN] Chinese text '{text}' cannot be rendered without Chinese fonts.")
+        print("  Download Chinese fonts: https://github.com/adobe-fonts/source-han-sans/releases")
+        print("  Or place simhei.ttf in C:/Windows/Fonts/")
+        print("  Using 'WATERMARK' as placeholder text.")
+        text = "WATERMARK"
+
+    # Estimate text size
+    font_scale = size / 30.0
+    thickness = max(2, int(font_scale * 2))
+    (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
 
     pad = max(4, size // 8)
-    img = Image.new('RGBA', (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.text((pad, pad), text, font=font, fill=(255, 255, 255, 255))
-    return np.array(img)
+    img_w = text_w + pad * 2
+    img_h = text_h + baseline + pad * 2
+
+    # Create RGBA image
+    rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+
+    # Draw white text on alpha channel
+    cv2.putText(rgba, text, (pad, pad + text_h),
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255, 255), thickness)
+
+    # Set alpha channel based on text presence
+    gray = cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2GRAY)
+    rgba[:, :, 3] = gray
+
+    return rgba
 
 
 def composite_watermark(background: np.ndarray, watermark: np.ndarray,
@@ -109,8 +170,10 @@ def main():
     font_path = args.font or _FONT_PATH
     if font_path:
         print(f"Using font: {font_path}")
-    else:
-        print("[WARN] No Chinese font found. Watermark text may not render correctly.")
+    elif _FONT_FALLBACK:
+        print("[WARN] No Chinese font found. Will use OpenCV putText fallback with ASCII text.")
+        print("  To use Chinese text, download a font (e.g. simhei.ttf) and place it in C:/Windows/Fonts/")
+        print("  Download: https://github.com/adobe-fonts/source-han-sans/releases")
 
     num_val = int(args.num * args.val_ratio)
     num_train = args.num - num_val

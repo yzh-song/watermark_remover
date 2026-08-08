@@ -1,4 +1,4 @@
-﻿# Watermark Remover - Centralized Configuration
+# Watermark Remover v12.0 - Centralized Configuration
 # All pipeline parameters are managed here for consistency.
 
 detect:
@@ -9,23 +9,30 @@ detect:
   multi_frame_confirm: 2
 
 mask:
-  feather: 6
+  feather: 11                    # Gaussian blur kernel size for mask edges
   dilate_kernel: 5
   dilate_iter: 2
-  grabcut_iter: 2
+  grabcut_iter: 3                # GrabCut refinement iterations (was 2)
   min_mask_pixels: 100
+  use_sam: true                  # Use SAM 2.1 for precise segmentation if available
+  sam_model: "models/sam/checkpoints/sam2.1_hiera_base_plus.pt"  # SAM 2.1 checkpoint path
+  sam_model_type: "sam2.1_hiera_b+"  # SAM 2.1 config: sam2.1_hiera_b+, sam2.1_hiera_l, sam2.1_hiera_s
 
 inpaint:
-  lama_resize_threshold: 1024
+  lama_resize_multiple: 32       # Resize to nearest multiple of 32 before LaMa
+  quality_ssim_threshold: 0.9    # SSIM below this => warning
 
 blend:
   blur_ksize: 21
   edge_filter_ksize: 3
+  poisson_edge_width: 10         # Edge width (px) for Poisson seamless cloning
 
 video:
   redetect_interval: 10
-  temporal_alpha: 0.2
+  temporal_alpha: 0.2            # EMA weight for current frame (was temporal_alpha)
+  temporal_weight: 0.7           # Current frame weight in optical flow fusion
   scene_change_threshold: 30.0
+  use_optical_flow: true         # DIS optical flow for mask propagation
 
 paths:
   project_root: "D:/AI/watermark_remover"

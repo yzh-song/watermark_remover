@@ -7,6 +7,7 @@ import sys
 import time
 import json
 import logging
+import logging.handlers
 import threading
 import webbrowser
 import subprocess
@@ -14,27 +15,50 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 # ============================================================
-# Logging config
+# Logging config (append mode + RotatingFileHandler)
 # ============================================================
 LOG_DIR = Path(r"D:\AI\watermark_remover\logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-_api_log_fd = open(LOG_DIR / 'api_server.log', 'w', encoding='utf-8', buffering=1)
-_api_log_fd.write(f"=== API Server v12.0 started at {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
-_api_log_fd.flush()
+API_LOG_PATH = LOG_DIR / 'api_server.log'
+ENGINE_LOG_PATH = LOG_DIR / 'engine.log'
 
-file_handler = logging.StreamHandler(_api_log_fd)
-file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+# Flush existing file handler to ensure clean start
+# Use RotatingFileHandler to prevent unlimited file growth
+api_file_handler = logging.handlers.RotatingFileHandler(
+    str(API_LOG_PATH), mode='a', maxBytes=10 * 1024 * 1024, backupCount=5,
+    encoding='utf-8', delay=False
+)
+api_file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
+))
+api_file_handler.setLevel(logging.DEBUG)
+
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+console_handler.setLevel(logging.INFO)
 
 root_logger = logging.getLogger()
 root_logger.handlers.clear()
-root_logger.setLevel(logging.INFO)
-root_logger.addHandler(file_handler)
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(api_file_handler)
 root_logger.addHandler(console_handler)
 
+# Dedicated engine log file handler
+engine_file_handler = logging.handlers.RotatingFileHandler(
+    str(ENGINE_LOG_PATH), mode='a', maxBytes=10 * 1024 * 1024, backupCount=5,
+    encoding='utf-8', delay=False
+)
+engine_file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] [%(name)s] %(message)s'
+))
+engine_file_handler.setLevel(logging.DEBUG)
+engine_logger = logging.getLogger('engine')
+engine_logger.addHandler(engine_file_handler)
+engine_logger.propagate = True  # Also propagate to root handlers
+
 logger = logging.getLogger(__name__)
+logger.info(f"=== API Server v12.0 started at {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
 
 # ============================================================
 # Module-level imports
@@ -51,8 +75,9 @@ except ImportError:
     def CORS(app, **kwargs): pass
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(r"D:\AI\watermark_remover\models\sam")))  # SAM 2.1
 from core.engine import InpaintingEngine, get_engine
-from core.detector import WatermarkDetector
+from core.detector import WatermarkDetector, WatermarkNotFoundError
 
 # Directories
 PROJECT_ROOT = Path(r"D:\AI\watermark_remover")
@@ -132,6 +157,19 @@ h1{text-align:center;font-size:2em;margin:20px 0;background:linear-gradient(135d
 .train-dialog input,.train-dialog select,.train-dialog textarea{width:100%;padding:8px;margin:0 0 10px;background:#2a2a3e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:.9em}
 .train-dialog .train-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 .train-log{background:#0f0f1a;color:#51cf66;padding:10px;max-height:200px;overflow-y:auto;font-size:.75em;margin-top:15px;border-radius:6px;display:none;white-space:pre-wrap;font-family:Consolas,monospace}
+.error-modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:2000;align-items:center;justify-content:center}
+.error-modal-overlay.show{display:flex}
+.error-modal{background:#1e1e3a;border-radius:16px;padding:30px;width:90%;max-width:480px;text-align:center;box-shadow:0 0 40px rgba(0,0,0,0.6);border:1px solid #c0392b}
+.error-modal .error-icon{font-size:3em;margin-bottom:10px}
+.error-modal h3{color:#ff6b6b;margin-bottom:12px;font-size:1.2em}
+.error-modal .error-msg{color:#e0e0e0;margin-bottom:8px;font-size:.95em;line-height:1.5}
+.error-modal .error-hint{color:#888;font-size:.85em;margin-bottom:20px;line-height:1.4}
+.error-modal .error-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.error-modal .error-btns button{padding:10px 24px;border:none;border-radius:8px;font-size:.95em;cursor:pointer;transition:all .3s}
+.error-modal .error-btns .btn-close{background:#c0392b;color:white}
+.error-modal .error-btns .btn-close:hover{background:#e74c3c}
+.error-modal .error-btns .btn-switch{background:#667eea;color:white}
+.error-modal .error-btns .btn-switch:hover{background:#764ba2}
 </style>
 </head>
 <body>
@@ -226,6 +264,20 @@ h1{text-align:center;font-size:2em;margin:20px 0;background:linear-gradient(135d
 <div class="train-log" id="trainLog"></div>
 </div>
 
+<!-- Error Popup Modal -->
+<div class="error-modal-overlay" id="errorOverlay">
+<div class="error-modal">
+<div class="error-icon">&#9888;</div>
+<h3 id="errorTitle">Processing Failed</h3>
+<div class="error-msg" id="errorMsg"></div>
+<div class="error-hint" id="errorHint"></div>
+<div class="error-btns">
+<button class="btn-close" id="errorCloseBtn">Close</button>
+<button class="btn-switch" id="errorSwitchBtn" style="display:none">Switch to Manual Mode</button>
+</div>
+</div>
+</div>
+
 <script>
 var currentMode='auto',currentFile=null,isVideo=false,resultFilename=null;
 var isDrawing=false,drawStart={x:0,y:0},drawEnd={x:0,y:0};
@@ -271,8 +323,35 @@ var trainLog=document.getElementById('trainLog');
 var textInputGroup=document.getElementById('textInputGroup');
 var logoInputGroup=document.getElementById('logoInputGroup');
 
+var errorOverlay=document.getElementById('errorOverlay');
+var errorTitle=document.getElementById('errorTitle');
+var errorMsg=document.getElementById('errorMsg');
+var errorHint=document.getElementById('errorHint');
+var errorCloseBtn=document.getElementById('errorCloseBtn');
+var errorSwitchBtn=document.getElementById('errorSwitchBtn');
+
 function isVideoFile(f){return f&&f.type.startsWith('video/')}
 function isImageFile(f){return f&&f.type.startsWith('image/')}
+
+// Error popup modal
+function showError(title, msg, hint, showSwitch){
+errorTitle.textContent=title||'Processing Failed';
+errorMsg.textContent=msg||'An unknown error occurred.';
+errorHint.textContent=hint||'';
+errorSwitchBtn.style.display=showSwitch?'inline-block':'none';
+errorOverlay.classList.add('show');
+}
+errorCloseBtn.addEventListener('click',function(){errorOverlay.classList.remove('show')});
+errorOverlay.addEventListener('click',function(e){if(e.target===errorOverlay)errorOverlay.classList.remove('show')});
+errorSwitchBtn.addEventListener('click',function(){
+errorOverlay.classList.remove('show');
+document.querySelectorAll('.mode-tab').forEach(function(t){t.classList.remove('active')});
+document.querySelector('.mode-tab[data-mode="manual"]').classList.add('active');
+currentMode='manual';
+updateUI();
+statusDiv.textContent='Switched to Manual Selection mode. Select watermark regions and click Process.';
+statusDiv.className='status';
+});
 
 document.querySelectorAll('.mode-tab').forEach(function(tab){
 tab.addEventListener('click',function(){
@@ -532,10 +611,12 @@ statusDiv.className='status success';
 }else{
 statusDiv.textContent='Preview failed: '+(data.error||'Unknown');
 statusDiv.className='status error';
+showError('Mask Preview Failed',data.error||'Unknown error','Make sure regions are correctly selected and the image is valid.',false);
 }
 }catch(err){
 statusDiv.textContent='Preview request failed: '+err.message;
 statusDiv.className='status error';
+showError('Connection Error','Failed to connect to server: '+err.message,'',false);
 }
 });
 
@@ -603,12 +684,17 @@ statusDiv.textContent='Done! ('+(data.time?data.time.toFixed(1):'?')+'s)';
 statusDiv.className='status success';
 if(data.hint)statusDiv.textContent+=' | '+data.hint;
 }else{
-statusDiv.textContent='Failed: '+(data.error||'Unknown error');
+var errMsg=data.error||'Unknown error';
+var errHint=data.hint||'';
+var isNoWatermark=errMsg.toLowerCase().indexOf('no watermark')>=0||errMsg.toLowerCase().indexOf('not detected')>=0;
+statusDiv.textContent='Failed: '+errMsg;
 statusDiv.className='status error';
+showError('Processing Failed',errMsg,errHint||(isNoWatermark?'Please switch to Manual Selection mode to manually mark the watermark region.':'Check the watermark area and try again, or switch to Manual Selection mode.'),currentMode==='auto');
 }
 }catch(err){
 statusDiv.textContent='Request failed: '+err.message;
 statusDiv.className='status error';
+showError('Connection Error','Failed to connect to the server: '+err.message,'Please check if the server is running and try again.',false);
 }finally{
 processBtn.disabled=false;
 progressBar.style.display='none';
@@ -701,6 +787,7 @@ startTrainBtn.disabled=false;
 }).catch(function(err){
 trainLog.textContent='Request failed: '+err.message;
 startTrainBtn.disabled=false;
+showError('Training Error','Failed to start training: '+err.message,'',false);
 });
 });
 </script>
@@ -720,6 +807,13 @@ def health():
         'status': 'ready' if engine is not None else 'initializing',
         'device': str(engine.device) if engine else 'unknown',
         'cuda': torch.cuda.is_available() if engine else False,
+        'capabilities': {
+            'lama': engine.inpainter_loaded if engine else False,
+            'yolo': engine.yolo_available if engine else False,
+            'u2net': engine.u2net_available if engine else False,
+            'sam': engine.sam_available if engine else False,
+            'optical_flow': engine.video_processor_loaded if engine else False,
+        } if engine else {},
     }
     return jsonify(status_info)
 
@@ -822,8 +916,16 @@ def process():
 
         return jsonify(response)
 
+    except WatermarkNotFoundError as e:
+        # No watermark detected by any strategy
+        logger.warning("Processing failed (no watermark): %s", e)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'hint': 'Switch to Manual Selection mode, draw the watermark region on the canvas, and process again.'
+        }), 400
     except ValueError as e:
-        # Expected errors: no watermark detected, empty mask, etc.
+        # Expected errors: empty mask, invalid bbox, etc.
         logger.warning("Processing failed (expected): %s", e)
         return jsonify({'success': False, 'error': str(e)}), 400
     except RuntimeError as e:

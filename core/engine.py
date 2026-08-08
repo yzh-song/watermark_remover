@@ -1,6 +1,7 @@
 """
 Core Inpainting Engine - Three-stage pipeline orchestration.
 Version 12.0 - Detection -> Mask -> Inpaint -> Blend. Strict error handling.
+SAM segmentation, optical flow video processing, Poisson edge fusion.
 """
 import os
 import sys
@@ -13,6 +14,11 @@ from typing import Optional, Tuple, List, Union
 import torch
 import cv2
 import yaml
+
+# Add SAM 2.1 to path
+SAM2_DIR = Path(r"D:\AI\watermark_remover\models\sam")
+if str(SAM2_DIR) not in sys.path:
+    sys.path.insert(0, str(SAM2_DIR))
 
 logger = logging.getLogger('engine')
 
@@ -38,11 +44,15 @@ REDETECT_INTERVAL = VIDEO_CFG.get("redetect_interval", 10)
 TEMPORAL_ALPHA = VIDEO_CFG.get("temporal_alpha", 0.2)
 SCENE_CHANGE_THRESHOLD = VIDEO_CFG.get("scene_change_threshold", 30.0)
 
+# Import custom exception
+from core.detector import WatermarkNotFoundError
+
 
 class InpaintingEngine:
     """
     Image/video watermark removal engine.
     v12.0: Three-stage pipeline - detect -> mask -> inpaint -> blend.
+    SAM + GrabCut segmentation, optical flow video, Poisson edge blending.
     """
 
     def __init__(self, device: str = 'auto'):
@@ -50,11 +60,14 @@ class InpaintingEngine:
         self.inpainter = None
         self.segmenter = None
         self.detector = None
+        self.video_processor = None
         self.inpainter_loaded = False
         self.segmenter_loaded = False
         self.detector_loaded = False
+        self.video_processor_loaded = False
         self.yolo_available = False
         self.u2net_available = False
+        self.sam_available = False
         logger.info(f"Engine v12.0 initialized on device: {self.device}")
 
     def _get_device(self, device: str) -> torch.device:
@@ -94,7 +107,14 @@ class InpaintingEngine:
             from core.segmenter import Segmenter
             self.segmenter = Segmenter(device=self.device)
             self.segmenter_loaded = True
-            logger.info("[OK] Segmenter module loaded")
+
+            # Try loading SAM
+            sam_ok = self.segmenter.load_sam()
+            self.sam_available = sam_ok
+            if sam_ok:
+                logger.info("[OK] Segmenter: SAM + GrabCut")
+            else:
+                logger.info("[OK] Segmenter: GrabCut only")
             return True
         except Exception as e:
             logger.warning(f"[WARN] Segmenter load failed: {e}")
@@ -126,12 +146,25 @@ class InpaintingEngine:
             self.detector = None
             return False
 
+    def load_video_processor(self) -> bool:
+        try:
+            from core.video_processor import VideoProcessor
+            self.video_processor = VideoProcessor(device=self.device)
+            self.video_processor._init_optical_flow()
+            self.video_processor_loaded = True
+            logger.info("[OK] VideoProcessor loaded (DIS optical flow)")
+            return True
+        except Exception as e:
+            logger.warning(f"[WARN] VideoProcessor load failed: {e}")
+            return False
+
     def load_model(self) -> bool:
         ok = self.load_inpainter()
         if not ok:
             return False
         self.load_segmenter()
         self.load_detector()
+        self.load_video_processor()
         return True
 
     def _ensure_modules(self):
@@ -182,17 +215,13 @@ class InpaintingEngine:
     def _detect_watermark_auto(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
         Auto-detect watermarks using YOLO + saliency fallback.
-        Raises ValueError if no watermark is found.
+        Raises WatermarkNotFoundError if no watermark is found.
         """
         if self.detector is None or not self.detector_loaded:
             raise RuntimeError("Detector not loaded. Cannot auto-detect watermarks.")
 
         regions = self.detector.detect_watermarks(image, use_yolo=True, use_saliency=True)
-        if not regions:
-            raise ValueError(
-                "No watermark detected. Please use Manual Selection mode "
-                "to draw the watermark region on the canvas."
-            )
+        # detect_watermarks now raises WatermarkNotFoundError if nothing found
         logger.info(f"Auto-detected {len(regions)} watermark regions")
         return regions
 
@@ -237,7 +266,7 @@ class InpaintingEngine:
             Path to output image
 
         Raises:
-            ValueError: If no watermark is detected in auto mode
+            WatermarkNotFoundError: If no watermark is detected in auto mode
             RuntimeError: If required modules are not loaded
         """
         self._ensure_modules()
@@ -273,7 +302,7 @@ class InpaintingEngine:
         return output_path
 
     # ================================================================
-    # Video Inpainting
+    # Video Inpainting (with optical flow temporal smoothing)
     # ================================================================
 
     def _create_video_writer(self, output_path: str, fps: float,
@@ -318,11 +347,11 @@ class InpaintingEngine:
                       end_frame: Optional[int] = None,
                       progress_callback=None) -> str:
         """
-        Inpaint video watermarks frame by frame.
+        Inpaint video watermarks with optical flow temporal smoothing.
         Auto mode: re-detects every REDETECT_INTERVAL frames.
         Manual mode: uses static mask from bboxes.
 
-        Raises ValueError if auto-detect fails on first frame.
+        Raises WatermarkNotFoundError if auto-detect fails on first frame.
         """
         self._ensure_modules()
         logger.info(f"Processing video: {video_path}")
@@ -352,9 +381,9 @@ class InpaintingEngine:
 
         # Determine mask strategy
         use_static_mask = (bboxes is not None and not auto_detect)
+        static_mask = None
         current_mask = None
         prev_frame_gray = None
-        prev_result = None
         failed_frames = 0
 
         if use_static_mask:
@@ -362,10 +391,18 @@ class InpaintingEngine:
                 raise RuntimeError("Segmenter not loaded")
             # Pre-generate static mask from bboxes
             dummy_image = np.zeros((height, width, 3), dtype=np.uint8)
-            current_mask = self.segmenter.generate_mask(dummy_image, bboxes)
-            if np.max(current_mask) <= 10:
+            static_mask = self.segmenter.generate_mask(dummy_image, bboxes)
+            if np.max(static_mask) <= 10:
                 raise ValueError("Generated mask is empty. Check bbox coordinates.")
+            current_mask = static_mask
             logger.info(f"Static mask: {np.sum(current_mask > 30)} pixels")
+
+        # Initialize video processor for optical flow
+        if self.video_processor is not None and self.video_processor_loaded:
+            self.video_processor.reset()
+            logger.info("VideoProcessor: optical flow temporal smoothing enabled")
+        else:
+            logger.info("VideoProcessor: not available, using basic frame-by-frame processing")
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         frame_idx = start_frame
@@ -395,29 +432,32 @@ class InpaintingEngine:
                             logger.info(f"Initial mask: {np.sum(current_mask > 30)} pixels")
                         else:
                             logger.info(f"Re-detected at frame {frame_idx}")
-                    except ValueError:
+                    except WatermarkNotFoundError:
                         # Detection failed, keep previous mask if any
                         if current_mask is None:
-                            raise ValueError(
-                                f"No watermark detected in first frames of video. "
+                            raise WatermarkNotFoundError(
+                                "No watermark detected in the first frames of the video. "
                                 "Try manual selection mode."
                             )
                         logger.info(f"Re-detection failed at frame {frame_idx}, using previous mask")
                 prev_frame_gray = frame_gray
 
-            # Inpaint or pass-through
+            # Process frame
             if current_mask is not None and np.max(current_mask) > 10:
                 try:
-                    # Use current_mask directly with inpainter + blend
-                    inpainted = self.inpainter.inpaint(frame_rgb, current_mask)
-                    from core.inpainter import Inpainter
-                    result_np = Inpainter.blend(frame_rgb, inpainted, current_mask)
-                    # Temporal EMA smoothing
-                    if prev_result is not None:
-                        result_np = (result_np.astype(np.float32) * TEMPORAL_ALPHA +
-                                     prev_result.astype(np.float32) * (1 - TEMPORAL_ALPHA))
-                        result_np = np.clip(result_np, 0, 255).astype(np.uint8)
-                    prev_result = result_np.copy()
+                    if self.video_processor is not None and self.video_processor_loaded:
+                        # Use video processor with optical flow temporal smoothing
+                        result_np = self.video_processor.process_frame(
+                            frame_rgb, frame_idx, end_frame,
+                            current_mask if not use_static_mask else None,
+                            self.inpainter,
+                            static_mask=static_mask if use_static_mask else None
+                        )
+                    else:
+                        # Basic frame-by-frame with EMA temporal smoothing
+                        inpainted = self.inpainter.inpaint(frame_rgb, current_mask)
+                        from core.inpainter import Inpainter
+                        result_np = Inpainter.blend(frame_rgb, inpainted, current_mask)
 
                     final_bgr = cv2.cvtColor(result_np, cv2.COLOR_RGB2BGR)
                     writer.write(final_bgr)
@@ -427,10 +467,8 @@ class InpaintingEngine:
                     logger.error(f"Frame {frame_idx} inpainting failed: {e}")
                     writer.write(frame)
                     failed_frames += 1
-                    prev_result = None
             else:
                 writer.write(frame)
-                prev_result = None
 
             frame_idx += 1
             if progress_callback:
@@ -493,12 +531,14 @@ def get_engine(device: str = 'auto') -> InpaintingEngine:
                 "Cannot load LaMa inpainting model. "
                 "Please check network or run: pip install simple-lama-inpainting"
             )
-        if _engine_instance.yolo_available and _engine_instance.u2net_available:
-            logger.info("Engine ready: LaMa + YOLO + U2-Net")
-        elif _engine_instance.yolo_available:
-            logger.info("Engine ready: LaMa + YOLO")
-        elif _engine_instance.u2net_available:
-            logger.info("Engine ready: LaMa + U2-Net")
-        else:
-            logger.info("Engine ready: LaMa only (manual mode)")
+        parts = ["LaMa"]
+        if _engine_instance.yolo_available:
+            parts.append("YOLO")
+        if _engine_instance.u2net_available:
+            parts.append("U2-Net")
+        if _engine_instance.sam_available:
+            parts.append("SAM")
+        if _engine_instance.video_processor_loaded:
+            parts.append("OpticalFlow")
+        logger.info(f"Engine ready: {' + '.join(parts)}")
     return _engine_instance

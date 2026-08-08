@@ -32,6 +32,12 @@ TEXTURE_LAP_VAR_MAX = DETECT_CFG.get("texture_lap_var_max", 500.0)
 FALLBACK_SALIENCY = DETECT_CFG.get("fallback_saliency", True)
 
 
+class WatermarkNotFoundError(Exception):
+    """Raised when no watermark is detected by any strategy.
+    The message should guide the user to use manual selection mode."""
+    pass
+
+
 class WatermarkDetector:
     """
     Multi-strategy watermark detector.
@@ -67,7 +73,7 @@ class WatermarkDetector:
         custom_path = MODEL_DIR / "watermark_yolo.pt"
         if not custom_path.exists():
             logger.error(f"[FAIL] YOLO watermark model not found: {custom_path}")
-            logger.error("  Run training: python scripts/train.py --mode text --text 'AI Generated'")
+            logger.error("  Run: python scripts/train.py --mode text --text 'AI Generated'")
             return False
 
         try:
@@ -246,7 +252,9 @@ class WatermarkDetector:
 
         Returns:
             List of (x1, y1, x2, y2) bounding boxes, max 5 regions.
-            Empty list only if NO watermark is found at all.
+
+        Raises:
+            WatermarkNotFoundError: If no watermark is detected by any strategy.
         """
         h, w = image.shape[:2]
 
@@ -293,8 +301,11 @@ class WatermarkDetector:
                         logger.info(f"Saliency detected {len(regions)} regions")
                         return regions[:5]
 
-        logger.warning("No watermark detected. Try manual selection mode.")
-        return []
+        # No watermark detected by any strategy -> raise error
+        raise WatermarkNotFoundError(
+            "No watermark detected. Please use Manual Selection mode "
+            "to draw the watermark region on the canvas."
+        )
 
     def load_all(self) -> dict:
         """Load all available models. Returns status dict."""
