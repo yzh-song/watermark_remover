@@ -1,0 +1,31 @@
+============================================================
+Watermark Remover - AI Inpainting Server v3.0
+============================================================
+Python: 3.12.12
+PyTorch: 2.5.1+cu121
+CUDA available: True
+GPU: NVIDIA GeForce RTX 4060 Laptop GPU
+VRAM: 8.0 GB
+Output dir: D:\AI\watermark_remover\output
+Log dir: D:\AI\watermark_remover\logs
+============================================================
+2026-08-05 06:02:02,918 [INFO] Initializing inpainting engine...
+2026-08-05 06:02:02,919 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-05 06:02:02,986 [INFO] Engine initialized on device: cuda
+2026-08-05 06:02:02,986 [INFO] Loading LaMa inpainting model...
+2026-08-05 06:02:03,609 [INFO] [OK] LaMa model loaded successfully
+2026-08-05 06:02:03,610 [INFO] Engine ready on device: cuda
+2026-08-05 06:02:03,610 [WARNING] rembg未安装，尝试直接加载U²-Net...
+2026-08-05 06:02:03,682 [WARNING] U²-Net模型文件不存在: D:\AI\watermark_remover\models\u2net.onnx
+
+Starting web server...
+Open browser: http://localhost:5000
+Press Ctrl+C to stop
+
+ * Serving Flask app 'api_server'
+ * Debug mode: off
+2026-08-05 06:02:03,705 [INFO] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.252:5000
+2026-08-05 06:02:03,705 [INFO] [33mPress CTRL+C to quit[0m

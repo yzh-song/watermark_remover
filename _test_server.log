@@ -1,0 +1,176 @@
+============================================================
+Watermark Remover - AI Inpainting Server v3.3
+============================================================
+Python: 3.12.12
+PyTorch: 2.5.1+cu121
+CUDA available: True
+GPU: NVIDIA GeForce RTX 4060 Laptop GPU
+VRAM: 8.0 GB
+Output dir: D:\AI\watermark_remover\output
+Log dir: D:\AI\watermark_remover\logs
+============================================================
+
+Initializing AI engine (this may take 10-30 seconds on first run)...
+Downloading models if needed...
+
+2026-08-05 10:46:45,355 [INFO] Initializing inpainting engine...
+2026-08-05 10:46:45,355 [INFO] Creating new engine instance...
+2026-08-05 10:46:45,355 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-05 10:46:45,397 [INFO] Engine initialized on device: cuda
+2026-08-05 10:46:45,397 [INFO] Loading LaMa inpainting model...
+2026-08-05 10:46:46,033 [INFO] [OK] LaMa model loaded successfully
+2026-08-05 10:46:46,033 [INFO] Engine ready on device: cuda
+2026-08-05 10:46:46,034 [WARNING] rembg未安装，尝试直接加载U²-Net...
+2026-08-05 10:46:46,100 [WARNING] U²-Net模型文件不存在: D:\AI\watermark_remover\models\u2net.onnx
+[OK] AI engine ready!
+
+============================================================
+  Server starting on http://localhost:5000
+  Open your browser to access the web UI
+  Press Ctrl+C to stop
+============================================================
+
+ * Serving Flask app 'api_server'
+ * Debug mode: off
+2026-08-05 10:46:46,120 [INFO] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.8.252:5000
+2026-08-05 10:46:46,120 [INFO] [33mPress CTRL+C to quit[0m
+2026-08-05 10:46:49,683 [INFO] 127.0.0.1 - - [05/Aug/2026 10:46:49] "GET /api/health HTTP/1.1" 200 -
+2026-08-05 10:46:59,990 [INFO] Processing video: D:\AI\watermark_remover\uploads\kling_20260609_作品_以_灾变城市图__图_3100_0.mp4
+2026-08-05 10:47:00,046 [INFO] Video: 1076x1924, 24.0fps, 121 frames
+2026-08-05 10:47:00,046 [INFO] Processing frames 0-121
+2026-08-05 10:47:00,049 [INFO] Using codec: mp4v -> D:\AI\watermark_remover\output\result_kling_20260609_作品_以_灾变城市图__图_3100_0.mp4
+2026-08-05 10:47:00,130 [WARNING] Auto-detect regions too large (30.1%), filtering...
+2026-08-05 10:47:00,130 [INFO] Auto-detected 2 watermark regions
+2026-08-05 10:47:00,144 [INFO] Watermark mask created, 17989 pixels
+2026-08-05 10:47:02,425 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:08,435 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:09,275 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:10,135 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:11,003 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:11,874 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:12,723 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:13,589 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:14,454 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:15,267 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:16,081 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:16,908 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:17,728 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:18,537 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:19,345 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:20,155 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:20,980 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:21,798 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:22,601 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:23,416 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:24,243 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:25,054 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:25,870 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:26,695 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:27,503 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:28,333 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:29,150 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:29,964 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:30,775 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:31,586 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:31,680 [INFO] Progress: 30/121 frames
+2026-08-05 10:47:32,408 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:33,235 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:34,069 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:34,887 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:35,722 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:36,549 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:37,374 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:38,215 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:39,050 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:39,882 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:40,726 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:41,575 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:42,406 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:43,245 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:44,081 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:44,936 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:45,776 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:46,609 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:47,444 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:48,285 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:49,124 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:49,975 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:50,818 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:51,656 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:52,495 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:53,339 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:54,145 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:54,950 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:55,770 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:56,574 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:56,658 [INFO] Progress: 60/121 frames
+2026-08-05 10:47:57,385 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:58,210 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:59,017 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:47:59,830 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:00,651 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:01,464 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:02,288 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:03,101 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:03,909 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:04,719 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:05,525 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:06,340 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:07,153 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:07,967 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:08,785 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:09,610 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:10,417 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:11,226 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:12,038 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:12,852 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:13,666 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:14,477 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:15,282 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:16,087 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:16,902 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:17,717 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:18,524 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:19,341 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:20,152 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:20,981 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:21,064 [INFO] Progress: 90/121 frames
+2026-08-05 10:48:21,789 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:22,599 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:23,412 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:24,218 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:25,037 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:25,844 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:26,658 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:27,466 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:28,288 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:29,101 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:29,925 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:30,745 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:31,564 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:32,402 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:33,215 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:34,030 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:34,851 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:35,694 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:36,503 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:37,292 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:38,095 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:38,924 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:39,736 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:40,551 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:41,365 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:42,190 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:43,002 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:43,818 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:44,624 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:45,446 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:45,527 [INFO] Progress: 120/121 frames
+2026-08-05 10:48:46,255 [INFO] Resizing inpainted from (1928, 1080) to (1924, 1076)
+2026-08-05 10:48:46,366 [INFO] Output file size: 7097.5KB
+2026-08-05 10:48:46,366 [INFO] [DONE] Video saved: D:\AI\watermark_remover\output\result_kling_20260609_作品_以_灾变城市图__图_3100_0.mp4 (106.4s)
+2026-08-05 10:48:46,372 [INFO] 127.0.0.1 - - [05/Aug/2026 10:48:46] "POST /api/process HTTP/1.1" 200 -
+2026-08-05 10:48:48,457 [INFO] 127.0.0.1 - - [05/Aug/2026 10:48:48] "GET /api/download/result_kling_20260609_作品_以_灾变城市图__图_3100_0.mp4 HTTP/1.1" 200 -

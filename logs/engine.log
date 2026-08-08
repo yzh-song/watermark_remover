@@ -1,0 +1,135 @@
+2026-08-07 16:21:06,169 [INFO] Creating new engine instance...
+2026-08-07 16:21:06,171 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-07 16:21:06,171 [INFO] Engine v11.0 initialized on device: cuda
+2026-08-07 16:21:07,125 [INFO] [OK] Inpainter module loaded (LaMa)
+2026-08-07 16:21:07,160 [INFO] [OK] Segmenter module loaded
+2026-08-07 16:21:16,137 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 16:21:16,138 [INFO] Engine ready: LaMa + YOLO + U2-Net + CV
+2026-08-07 17:52:29,844 [INFO] Creating new engine instance...
+2026-08-07 17:52:29,844 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-07 17:52:29,845 [INFO] Engine v11.0 initialized on device: cuda
+2026-08-07 17:52:30,760 [INFO] [OK] Inpainter module loaded (LaMa)
+2026-08-07 17:52:30,783 [INFO] [OK] Segmenter module loaded
+2026-08-07 17:52:34,676 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 17:52:34,676 [INFO] Engine ready: LaMa + YOLO + U2-Net + CV
+2026-08-07 17:52:42,489 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786096362.png
+2026-08-07 17:52:42,630 [INFO] Running YOLO watermark detection...
+2026-08-07 17:52:46,168 [INFO] Detector found 5 watermark regions
+2026-08-07 17:52:46,234 [INFO] Mask has 936640 pixels to inpaint (21.6% of image)
+2026-08-07 17:52:46,235 [INFO] Running LaMa inpainting...
+2026-08-07 17:52:49,934 [INFO] Inpainting completed successfully
+2026-08-07 17:52:50,392 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786096362.png (7.9s)
+2026-08-07 17:53:08,599 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786096388.png
+2026-08-07 17:53:08,751 [INFO] Mask has 41955 pixels to inpaint (1.0% of image)
+2026-08-07 17:53:08,751 [INFO] Running LaMa inpainting...
+2026-08-07 17:53:17,735 [INFO] Inpainting completed successfully
+2026-08-07 17:53:18,124 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786096388.png (9.5s)
+2026-08-07 18:47:04,932 [INFO] Creating new engine instance...
+2026-08-07 18:47:04,933 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-07 18:47:04,933 [INFO] Engine v11.0 initialized on device: cuda
+2026-08-07 18:47:05,467 [INFO] [OK] Inpainter module loaded (LaMa)
+2026-08-07 18:47:05,473 [INFO] [OK] Segmenter module loaded
+2026-08-07 18:47:08,025 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 18:47:08,026 [INFO] Engine ready: LaMa + YOLO + U2-Net + CV
+2026-08-07 19:51:14,933 [INFO] Creating new engine instance...
+2026-08-07 19:51:14,934 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-07 19:51:14,934 [INFO] Engine v11.0 initialized on device: cuda
+2026-08-07 19:51:15,560 [INFO] [OK] Inpainter module loaded (LaMa)
+2026-08-07 19:51:15,563 [INFO] [OK] Segmenter module loaded
+2026-08-07 19:51:17,973 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 19:51:17,973 [INFO] Engine ready: LaMa + YOLO + U2-Net + CV
+2026-08-07 19:51:25,423 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786103485.png
+2026-08-07 19:51:25,556 [INFO] Running YOLO watermark detection...
+2026-08-07 19:51:27,704 [INFO] Detector found 1 watermark regions
+2026-08-07 19:51:27,750 [INFO] Mask has 57971 pixels to inpaint (1.3% of image)
+2026-08-07 19:51:27,750 [INFO] Running LaMa inpainting...
+2026-08-07 19:51:31,322 [INFO] Inpainting completed successfully
+2026-08-07 19:51:31,924 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786103485.png (6.5s)
+2026-08-07 19:51:50,438 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786103510.png
+2026-08-07 19:51:50,593 [INFO] Mask has 46364 pixels to inpaint (1.1% of image)
+2026-08-07 19:51:50,594 [INFO] Running LaMa inpainting...
+2026-08-07 19:51:59,059 [INFO] Inpainting completed successfully
+2026-08-07 19:51:59,479 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786103510.png (9.0s)
+2026-08-07 19:54:52,002 [INFO] Processing video: D:\AI\watermark_remover\uploads\upload_1786103691.mp4
+2026-08-07 19:54:52,218 [INFO] Video: 1076x1924, 24.0fps, 289 frames
+2026-08-07 19:54:52,219 [INFO] Processing frames 0-289
+2026-08-07 19:54:54,494 [INFO] Using codec: avc1 -> D:\AI\watermark_remover\output\result_upload_1786103691.mp4
+2026-08-07 19:54:54,618 [INFO] Running YOLO watermark detection...
+2026-08-07 19:54:56,204 [INFO] Detector found 1 watermark regions
+2026-08-07 19:54:56,212 [INFO] Running YOLO watermark detection...
+2026-08-07 19:54:57,742 [INFO] Detector found 1 watermark regions
+2026-08-07 19:54:57,750 [INFO] Running YOLO watermark detection...
+2026-08-07 19:54:59,214 [INFO] Detector found 1 watermark regions
+2026-08-07 19:54:59,219 [INFO] Running YOLO watermark detection...
+2026-08-07 19:55:00,691 [INFO] Detector found 1 watermark regions
+2026-08-07 19:55:00,697 [INFO] Running YOLO watermark detection...
+2026-08-07 19:55:02,164 [INFO] Detector found 1 watermark regions
+2026-08-07 19:55:02,184 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 19:55:02,187 [INFO] Initial watermark mask from 5-frame scan: 2070224 pixels
+2026-08-07 19:55:02,241 [INFO] Running YOLO watermark detection...
+2026-08-07 19:55:03,709 [INFO] Detector found 1 watermark regions
+2026-08-07 19:55:03,725 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 19:55:03,727 [INFO] Initial watermark mask: 2070224 pixels
+2026-08-07 19:56:21,438 [INFO] Progress: 30/289 frames
+2026-08-07 19:57:33,999 [INFO] Progress: 60/289 frames
+2026-08-07 19:57:34,008 [INFO] Running YOLO watermark detection...
+2026-08-07 19:57:35,484 [INFO] Detector found 1 watermark regions
+2026-08-07 19:57:35,500 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 19:57:35,501 [INFO] Re-detected watermark at frame 60
+2026-08-07 19:58:47,786 [INFO] Progress: 90/289 frames
+2026-08-07 19:59:59,756 [INFO] Progress: 120/289 frames
+2026-08-07 19:59:59,764 [INFO] Running YOLO watermark detection...
+2026-08-07 20:00:01,243 [INFO] Detector found 1 watermark regions
+2026-08-07 20:00:01,262 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 20:00:01,262 [INFO] Re-detected watermark at frame 120
+2026-08-07 20:01:12,971 [INFO] Progress: 150/289 frames
+2026-08-07 20:02:24,691 [INFO] Progress: 180/289 frames
+2026-08-07 20:02:24,700 [INFO] Running YOLO watermark detection...
+2026-08-07 20:02:26,160 [INFO] Detector found 5 watermark regions
+2026-08-07 20:02:26,178 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 20:02:26,178 [INFO] Re-detected watermark at frame 180
+2026-08-07 20:02:57,605 [INFO] Progress: 210/289 frames
+2026-08-07 20:03:28,671 [INFO] Progress: 240/289 frames
+2026-08-07 20:03:28,680 [INFO] Running YOLO watermark detection...
+2026-08-07 20:03:30,139 [INFO] Detector found 2 watermark regions
+2026-08-07 20:03:30,155 [WARNING] KCF tracker unavailable (OpenCV contrib/legacy not installed)
+2026-08-07 20:03:30,155 [INFO] Re-detected watermark at frame 240
+2026-08-07 20:04:01,512 [INFO] Progress: 270/289 frames
+2026-08-07 20:04:21,262 [INFO] Output file size: 64556.7KB
+2026-08-07 20:04:21,262 [INFO] [DONE] Video saved: D:\AI\watermark_remover\output\result_upload_1786103691.mp4 (569.3s, 0 failed frames)
+2026-08-07 21:04:43,544 [INFO] Processing video: D:\AI\watermark_remover\uploads\upload_1786107882.mp4
+2026-08-07 21:04:43,622 [INFO] Video: 1076x1924, 24.0fps, 289 frames
+2026-08-07 21:04:43,623 [INFO] Processing frames 0-289
+2026-08-07 21:04:45,099 [INFO] Using codec: avc1 -> D:\AI\watermark_remover\output\result_upload_1786107882.mp4
+2026-08-07 21:04:45,110 [INFO] Static mask: 39425 pixels
+2026-08-07 21:05:15,652 [INFO] Progress: 30/289 frames
+2026-08-07 21:05:46,224 [INFO] Progress: 60/289 frames
+2026-08-07 21:06:16,850 [INFO] Progress: 90/289 frames
+2026-08-07 21:06:47,485 [INFO] Progress: 120/289 frames
+2026-08-07 21:07:18,091 [INFO] Progress: 150/289 frames
+2026-08-07 21:07:48,655 [INFO] Progress: 180/289 frames
+2026-08-07 21:08:19,244 [INFO] Progress: 210/289 frames
+2026-08-07 21:08:49,729 [INFO] Progress: 240/289 frames
+2026-08-07 21:09:20,352 [INFO] Progress: 270/289 frames
+2026-08-07 21:09:39,863 [INFO] Output file size: 62120.3KB
+2026-08-07 21:09:39,863 [INFO] [DONE] Video saved: D:\AI\watermark_remover\output\result_upload_1786107882.mp4 (296.3s, 0 failed frames)
+2026-08-07 21:17:07,987 [INFO] Creating new engine instance...
+2026-08-07 21:17:07,988 [INFO] [GPU] NVIDIA GeForce RTX 4060 Laptop GPU (8.0GB) - CUDA enabled
+2026-08-07 21:17:07,988 [INFO] Engine v11.0 initialized on device: cuda
+2026-08-07 21:17:08,554 [INFO] [OK] Inpainter module loaded (LaMa)
+2026-08-07 21:17:08,558 [INFO] [OK] Segmenter module loaded
+2026-08-07 21:17:11,170 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 21:17:11,171 [INFO] Engine ready: LaMa + YOLO + U2-Net + CV
+2026-08-07 21:46:57,632 [INFO] [OK] Detector: YOLO + U2-Net + CV
+2026-08-07 21:48:16,927 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786110496.png
+2026-08-07 21:48:17,069 [INFO] Running YOLO watermark detection...
+2026-08-07 21:48:21,297 [INFO] Detector found 1 watermark regions
+2026-08-07 21:48:21,332 [INFO] Mask has 3016640 pixels to inpaint (69.6% of image)
+2026-08-07 21:48:21,334 [INFO] Running LaMa inpainting...
+2026-08-07 21:48:26,728 [INFO] Inpainting completed successfully
+2026-08-07 21:48:27,109 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786110496.png (10.2s)
+2026-08-07 21:48:55,834 [INFO] Processing image: D:\AI\watermark_remover\uploads\upload_1786110535.png
+2026-08-07 21:48:55,991 [INFO] Mask has 41380 pixels to inpaint (1.0% of image)
+2026-08-07 21:48:55,992 [INFO] Running LaMa inpainting...
+2026-08-07 21:49:04,850 [INFO] Inpainting completed successfully
+2026-08-07 21:49:05,264 [INFO] [DONE] Image saved: D:\AI\watermark_remover\output\result_upload_1786110535.png (9.4s)

@@ -1,0 +1,33 @@
+# 自动检测文本文件，并规范化换行符
+* text=auto
+# 对于 Python 等源码文件，强制使用 LF（检出时也转为 LF）
+*.py text eol=lf
+*.txt text eol=lf
+# 对于 Windows 批处理文件，强制使用 CRLF（检出时转为 CRLF）
+*.bat text eol=crlf
+# 日志
+logs/*.log
+# 输出结果
+output/
+uploads/
+WatermarkDataset/
+# 测试产物（如果不希望提交测试图片）
+test/*.png
+test/*.jpg
+test/*.mp4
+# 其他临时文件
+*.tmp
+*.cache
+__pycache__/
+*.pyc
+*.pth filter=lfs diff=lfs merge=lfs -text
+*.pb filter=lfs diff=lfs merge=lfs -text
+*.h5 filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.tar.gz filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.avi filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
+*.jpg filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text

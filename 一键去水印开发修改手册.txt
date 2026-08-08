@@ -1,0 +1,655 @@
+为了彻底解决“一键去水印”后图像出现马赛克、批量处理仅原图复制等问题，我基于你描述的故障现象和典型工程实现，推断出现有项目很可能采用了 OpenCV 的简单修复（如 `INPAINT_TELEA/NS`）或直接模糊/像素覆盖，导致大面积纹理丢失而呈现马赛克；批量处理逻辑可能错误地跳过了核心处理函数直接复制了原图。
+
+下面是一份完整的**项目重构开发手册**，覆盖架构、模型、算法、接口和关键实现。按此手册实施，可得到清晰自然、无任何马赛克痕迹的最终效果。
+
+---
+
+# 一键去水印软件重构开发手册 v2.0
+
+## 1. 问题诊断与重构目标
+
+| 现象 | 根因推断 | 重构策略 |
+|------|----------|----------|
+| 图片去水印后出现大片马赛克 | 使用传统修复算法（如 `cv2.inpaint`）或简单模糊，无法生成新纹理 | 替换为基于深度学习的生成式图像修复模型（LaMa, MAT, AOT-GAN 等） |
+| 视频去水印逐帧马赛克 | 同上，且无帧间一致性处理 | 逐帧修复 + 光流引导的时域平滑后处理 |
+| 手动框选去水印依然马赛克 | 手动生成的 mask 直接送入传统修复器 | mask 送入深度学习修复模型，完全替换修复核心 |
+| 批量去水印原图直接复制 | 批量处理逻辑错误，未实际调用修复函数或路径混淆 | 重构批量处理管道，严格验证输出与原图的差异 |
+| 结果有水印残留或模糊 | 未进行后处理增强或修复区域融合不当 | 增加泊松融合 / 边缘平滑，输出与背景自然融合 |
+
+**最终目标：**  
+- 去除水印后区域纹理清晰、与周围内容无缝衔接，人类肉眼无法察觉修改痕迹。  
+- 图片、视频均支持一键智能识别水印区域（可选）和手动框选，批量处理结果正确。
+
+---
+
+## 2. 整体架构设计
+
+```
+┌──────────────────────────────────────────────┐
+│              用户界面 (GUI/CLI)              │
+└───────────────┬──────────────────────────────┘
+                │ 任务请求 (单图/视频/批量)
+┌───────────────▼──────────────────────────────┐
+│              任务调度器 (TaskScheduler)       │
+└───────┬──────────────────────────────────────┘
+        │
+┌───────▼──────────────────────────────────────┐
+│         水印检测模块 (WatermarkDetector)      │
+│  - 智能检测 (显著性分析 / 小目标检测模型)      │
+│  - 手动框选 (返回 mask)                       │
+└───────┬──────────────────────────────────────┘
+        │ mask (二值图/灰度图)
+┌───────▼──────────────────────────────────────┐
+│      核心修复模块 (InpaintingEngine)          │
+│  - 图片修复: 基于深度学习模型推理              │
+│  - 视频修复: 逐帧修复 + 时域一致性增强         │
+└───────┬──────────────────────────────────────┘
+        │ 修复后图像/帧
+┌───────▼──────────────────────────────────────┐
+│      后处理模块 (PostProcessor)               │
+│  - 融合边缘平滑 (泊松融合)                     │
+│  - 视频帧间平滑                               │
+└───────┬──────────────────────────────────────┘
+        │ 最终结果
+┌───────▼──────────────────────────────────────┐
+│              输出管理器 (OutputWriter)        │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 技术选型与模型
+
+### 3.1 图像修复模型（核心）
+
+**推荐模型：LaMa (Large Mask Inpainting)**  
+- 基于快速傅里叶卷积(FFC)，能处理大区域缺失，生成合理纹理。  
+- 开源预训练权重丰富，推理速度快，适合产品化。  
+- 替代方案：MAT（Mask-Aware Transformer）更注重细节，但略慢；AOT-GAN 在自然场景表现也不错。
+
+**模型获取与集成方式：**
+- 使用 PyTorch 加载预训练模型，转换为 ONNX 或使用 torch.jit 进行优化部署。
+- 如需要轻量化，可使用 TensorRT 加速。
+
+**重要：** 必须放弃所有基于 `cv2.inpaint` 的调用。
+
+### 3.2 水印检测模型（可选智能模式）
+
+- 可使用 **显著性检测**（如 U²-Net）来定位大面积 logo/文字区域，生成初始 mask。
+- 或训练一个小目标检测器（YOLOv8-nano）专门检测常见水印样式。
+- 如果仅手动框选，则直接由用户交互产生 mask。
+
+### 3.3 视频一致性增强
+
+- 使用 **RAFT 光流模型** 估计相邻帧运动。
+- 对修复后的区域进行光流引导的传播和平均，消除闪烁和帧间不一致。
+
+---
+
+## 4. 项目文件结构与模块划分
+
+基于原项目路径 `D:\AI\work-mode-projects\watermark_remover`，重构后文件树如下：
+
+```
+watermark_remover/
+├── models/                     # 预训练模型存放
+│   ├── lama_finetuned.pth
+│   ├── u2net.pth
+│   └── raft_optical_flow.pth
+├── core/
+│   ├── __init__.py
+│   ├── scheduler.py            # 任务调度器
+│   ├── detector.py             # 水印检测（智能/手动）
+│   ├── engine.py               # 修复引擎（图片/视频）
+│   ├── postprocess.py          # 后处理（融合、时域平滑）
+│   └── utils.py                # 图像处理工具
+├── ui/
+│   ├── main_window.py          # 主界面
+│   └── ...
+├── batch_processor.py          # 批量处理入口
+├── requirements.txt
+└── config.yaml                 # 全局配置（模型路径、设备、参数）
+```
+
+---
+
+## 5. 核心模块详细设计
+
+### 5.1 配置管理 (`config.yaml`)
+
+```yaml
+device: "cuda:0"            # 或 "cpu"
+inpaint_model: "lama"        # 可选 "mat", "aot"
+detect_model: "u2net"        # 智能检测模型
+inpaint_resolution: 1024     # 修复时的基准分辨率
+video_optical_flow: true
+batch_output_suffix: "_nowatermark"
+```
+
+### 5.2 任务调度器 `core/scheduler.py`
+
+```python
+class TaskScheduler:
+    def __init__(self, config):
+        self.detector = WatermarkDetector(config)
+        self.engine = InpaintingEngine(config)
+        self.post = PostProcessor(config)
+
+    def process_image(self, image_path, mask=None, smart_detect=True):
+        img = cv2.imread(image_path)
+        if mask is None and smart_detect:
+            mask = self.detector.detect(img)        # 返回灰度mask
+        elif mask is None:
+            mask = np.ones(img.shape[:2], dtype=np.uint8)*255  # 全图无mask则报错
+        repaired = self.engine.inpaint_image(img, mask)
+        final = self.post.blend(img, repaired, mask)
+        return final
+
+    def process_video(self, video_path, mask_frames=None):
+        # 逐帧处理并收集，然后进行时域平滑
+        ...
+```
+
+### 5.3 水印检测模块 `core/detector.py`
+
+```python
+class WatermarkDetector:
+    def __init__(self, config):
+        # 加载智能检测模型（U2Net）
+        self.net = load_u2net(config['detect_model'])
+        self.device = config['device']
+
+    def detect(self, image: np.ndarray) -> np.ndarray:
+        """返回0-255的二值mask, 水印区域为255"""
+        # 预处理 -> 推理 -> 后处理(阈值、形态学去噪)
+        tensor = preprocess(image).to(self.device)
+        pred = self.net(tensor)  # 显著性图
+        mask = (pred > 0.5).astype(np.uint8) * 255
+        mask = morphological_close(mask)  # 填补孔洞
+        return mask
+```
+
+如果用户手动框选，直接在 UI 中生成矩形或多边形 mask 传入调度器即可。
+
+### 5.4 核心修复引擎 `core/engine.py`（最重要的部分）
+
+```python
+class InpaintingEngine:
+    def __init__(self, config):
+        self.model = self.load_inpaint_model(config['inpaint_model'])
+        self.resolution = config.get('inpaint_resolution', 1024)
+        self.device = config['device']
+
+    def load_inpaint_model(self, name):
+        if name == 'lama':
+            from lama_inpaint import LaMaModel  # 需实现或使用开源
+            model = LaMaModel('models/lama_finetuned.pth')
+        elif name == 'mat':
+            from mat_inpaint import MATModel
+            model = MATModel('models/mat.pth')
+        else:
+            raise ValueError("Unsupported model")
+        model.eval().to(self.device)
+        return model
+
+    def inpaint_image(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """
+        image: BGR uint8 [0,255]
+        mask:  single channel uint8, 255为待修复区域
+        returns: 修复后的完整图像 BGR uint8
+        """
+        # 1. 缩放至模型处理分辨率（保持宽高比）
+        orig_h, orig_w = image.shape[:2]
+        scale = min(self.resolution / max(orig_h, orig_w), 1.0)
+        if scale < 1.0:
+            new_w, new_h = int(orig_w*scale), int(orig_h*scale)
+            image_resized = cv2.resize(image, (new_w, new_h))
+            mask_resized = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            image_resized, mask_resized = image, mask
+
+        # 2. 转换为 Tensor, 归一化
+        img_tensor = torch.from_numpy(image_resized).permute(2,0,1).unsqueeze(0).float() / 255.0  # [0,1]
+        mask_tensor = torch.from_numpy(mask_resized).unsqueeze(0).unsqueeze(0).float() / 255.0     # [0,1]
+        # 将 mask 区域在图像中置为0 (模型输入约定)
+        masked_img = img_tensor * (1 - mask_tensor)
+
+        # 3. 推理
+        with torch.no_grad():
+            inpainted = self.model(masked_img.to(self.device), mask_tensor.to(self.device))
+        inpainted = inpainted.cpu().squeeze(0).permute(1,2,0).numpy()  # HWC, [0,1]
+
+        # 4. 缩放回原始尺寸
+        if scale < 1.0:
+            inpainted = cv2.resize(inpainted, (orig_w, orig_h))
+            mask_fullres = cv2.resize(mask_resized, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            mask_fullres = mask
+
+        # 5. 仅将修复区域替换原图，保留未修改部分绝对不变
+        inpainted = (inpainted * 255).astype(np.uint8)
+        image = image.astype(np.float32)
+        mask_3ch = (mask_fullres > 127).astype(np.float32)[:, :, np.newaxis]
+        result = image * (1 - mask_3ch) + inpainted * mask_3ch
+        return result.astype(np.uint8)
+```
+
+**关键点：**
+- 必须保留原图未修复区域像素完全不变（通过 mask 精确替换）。
+- 缩放步骤保证模型在恒定分辨率下工作，避免显存溢出。
+
+### 5.5 后处理模块 `core/postprocess.py`
+
+```python
+class PostProcessor:
+    def blend(self, original, repaired, mask, method='poisson'):
+        """
+        使用泊松融合平滑修复边界，消除可见接缝。
+        original: 原始图像
+        repaired: 修复引擎输出的完整图像（已替换修复区域）
+        mask: 单通道，修复区域为255
+        """
+        if method == 'poisson':
+            # 将修复区域中心作为融合中心
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                x, y, w, h = cv2.boundingRect(contours[0])
+                center = (x + w//2, y + h//2)
+                # 使用 seamlessClone
+                result = cv2.seamlessClone(repaired, original, mask, center, cv2.NORMAL_CLONE)
+                return result
+        # 无有效轮廓则直接返回 repaired
+        return repaired
+
+    def temporal_smooth(self, frames, masks):
+        """
+        使用光流对修复区域进行双向传播平滑，减少闪烁。
+        调用 RAFT 或简单光流加权平均。
+        """
+        ...
+```
+
+### 5.6 视频处理流程
+
+在 `engine.py` 中增加方法：
+
+```python
+def inpaint_video(self, video_path, output_path, mask_generator=None):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+
+    frames = []
+    frame_masks = []
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        if mask_generator:
+            mask = mask_generator(frame)
+        else:
+            mask = self.detector.detect(frame)  # 若无外部生成器，每帧检测
+        repaired = self.inpaint_image(frame, mask)
+        frames.append(repaired)
+        frame_masks.append(mask)
+
+    # 后处理时域一致性
+    smoothed_frames = self.post.temporal_smooth(frames, frame_masks)
+    for f in smoothed_frames:
+        out.write(f)
+    cap.release(); out.release()
+```
+
+建议视频修复时，第一帧检测水印区域，后续帧利用前一帧 mask 结合光流传播，减少每帧检测计算量，同时保证 mask 稳定。
+
+---
+
+## 6. 批量处理纠正
+
+在原 `batch_processor.py` 中，必须确保：
+
+```python
+def batch_process(input_dir, output_dir, smart_detect=True):
+    scheduler = TaskScheduler(config)
+    for img_name in os.listdir(input_dir):
+        input_path = os.path.join(input_dir, img_name)
+        output_path = os.path.join(output_dir, img_name.replace('.jpg', '_clean.jpg'))
+        if os.path.exists(output_path):
+            continue
+        # 关键：必须调用 scheduler 处理
+        result = scheduler.process_image(input_path, mask=None, smart_detect=smart_detect)
+        # 验证：确保输出图像和原图在某些区域有差异（修复区域）
+        if np.array_equal(cv2.imread(input_path), result):
+            raise RuntimeError(f"处理失败，输出与原图一致: {img_name}")
+        cv2.imwrite(output_path, result)
+```
+
+添加差异校验，防止出现“原图复制”问题。
+
+---
+
+## 7. 模型集成详细指南
+
+### 7.1 LaMa 模型封装示例
+
+从开源仓库 (如 GitHub: `advimman/lama`) 获取模型定义和权重，封装为 `core/lama_wrapper.py`：
+
+```python
+import torch.nn as nn
+class LaMaModel(nn.Module):
+    def __init__(self, checkpoint_path):
+        super().__init__()
+        # 根据 lama 官方代码构建网络 (FFC 等)
+        self.generator = ...  # 加载架构
+        self.load_state_dict(torch.load(checkpoint_path, map_location='cpu')['state_dict'], strict=False)
+
+    def forward(self, masked_image, mask):
+        # masked_image: [B,3,H,W] 值在0-1，缺失区域为0
+        # mask: [B,1,H,W] 值为0或1，1为缺失
+        input = torch.cat([masked_image, mask], dim=1)
+        output = self.generator(input)
+        return output  # [B,3,H,W] 0-1
+```
+
+注意 LaMa 输入通常需要将 mask 区域像素置为0，并拼接 mask 作为一个通道输入。
+
+### 7.2 模型加速（可选）
+
+- 将 PyTorch 模型转为 ONNX，使用 ONNX Runtime 推理。
+- 或使用 OpenVINO / TensorRT 加速，在 CPU/GPU 上均能实时处理高分辨率图片。
+
+---
+
+## 8. 关键函数和调用关系图
+
+```
+用户点击“一键去水印” (图片)
+  → TaskScheduler.process_image(img_path, smart_detect=True)
+    → WatermarkDetector.detect(img) → mask
+    → InpaintingEngine.inpaint_image(img, mask) → repaired
+    → PostProcessor.blend(img, repaired, mask) → final
+  → 显示/保存 final
+```
+
+```
+用户框选区域 (手动)
+  → 生成 mask (矩形内255)
+  → 同上但跳过检测
+```
+
+```
+视频处理
+  → TaskScheduler.process_video(video_path)
+    → 循环读取帧
+      → 检测/传入 mask
+      → inpaint_image
+    → temporal_smooth
+  → 输出视频
+```
+
+```
+批量处理
+  → batch_processor.py 循环
+    → scheduler.process_image 处理每张图
+    → 写入带后缀文件
+```
+
+---
+
+## 9. 开发与测试建议
+
+1. **单元测试**：先对单张图片使用手动 mask 测试修复引擎，确保不产生马赛克。
+2. **对比测试**：将修复区域放大对比，必须自然无网格。
+3. **批量测试**：随机抽取 100 张图片进行批量，检查输出文件大小、MD5 与原图不同，且无马赛克。
+4. **视频测试**：重点观察修复区域边缘是否闪烁，必要时调整时域平滑参数。
+
+---
+
+## 10. 原项目代码迁移要点
+
+- **彻底删除** `cv2.inpaint` 相关调用。
+- 移除任何基于简单模糊或像素复制的修复逻辑。
+- 将图像读写统一使用 OpenCV，保持 BGR 顺序一致。
+- 修改批量处理主循环，防止“直接复制”的 bug。
+- 添加异常处理和日志，便于定位问题。
+
+---
+
+要实现手册中的效果，模型的选择和正确加载是关键。下面提供 **LaMa（图像修复核心）**、**U²-Net（水印检测）**、**RAFT（光流一致性）** 以及备用方案 **MAT** 的具体代码实现和权重获取方式，你可以直接集成到项目 `D:\AI\work-mode-projects\watermark_remover` 中。
+
+---
+
+## 1. LaMa 图像修复模型（核心引擎）
+
+LaMa 基于快速傅里叶卷积，尤其适合大区域掩码修复，是避免马赛克的最佳选择。
+
+### 权重与仓库
+- **官方实现**：`https://github.com/advimman/lama`
+- **更易集成的简化版**：`https://github.com/enesmsahin/simple-lama-inpainting`（已封装，可直接 pip 安装）
+- **预训练权重直接下载**（推荐）：
+  - 官方 LaMa 模型：`https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt`
+  - 或从 simple-lama 自动下载。
+
+### 集成方式一（simple-lama，最快速）
+```bash
+pip install simple-lama
+```
+代码封装示例（`core/lama_wrapper.py`）：
+```python
+from simple_lama_inpainting import SimpleLama
+import cv2
+import numpy as np
+
+class LamaEngine:
+    def __init__(self, device='cuda'):
+        self.model = SimpleLama(device=device)
+
+    def inpaint(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """
+        image: BGR uint8
+        mask: 灰度 uint8, 255 为待修复区域
+        return: BGR uint8 修复后图像
+        """
+        # simple_lama 接口直接接受 numpy 数组，输出 RGB，需转回 BGR
+        result = self.model(image, mask)
+        return cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
+```
+
+### 集成方式二（直接使用官方权重，更可控）
+下载权重 `big-lama.pt` 放置于 `models/` 下，然后使用以下封装（需安装 `torch` 和 `omegaconf`）：
+```python
+import torch
+import cv2
+import numpy as np
+from omegaconf import OmegaConf
+from saicinpainting.training.trainers import load_checkpoint
+
+class LamaOfficial:
+    def __init__(self, checkpoint_path='models/big-lama.pt', device='cuda'):
+        self.device = device
+        # 需要克隆官方仓库才能使用 saicinpainting 模块
+        # git clone https://github.com/advimman/lama.git
+        # 或者直接使用上面 simple_lama 的代码来避免复杂的依赖。
+        # 这里仅提供思路，建议用 simple_lama。
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        self.model = load_checkpoint(...)
+        self.model.to(device)
+        self.model.eval()
+
+    def inpaint(self, image, mask):
+        # 预处理、推理、后处理（参考手册 engine.py 中的 inpaint_image 方法）
+        pass
+```
+**强烈建议**：采用 `simple-lama-inpainting` 库，它已将预处理/后处理封装好，避免手动实现出错。
+
+---
+
+## 2. U²-Net 显著性检测模型（智能水印检测）
+
+用于自动检测水印区域，生成精细 mask。
+
+### 权重获取
+- **官方仓库**：`https://github.com/xuebinqin/U-2-Net`
+- **预训练权重直接下载**：
+  - 用于通用显著性检测：`https://github.com/xuebinqin/U-2-Net/raw/master/saved_models/u2net/u2net.pth`（176.3 MB）
+  - 轻量版 u2netp：`https://github.com/xuebinqin/U-2-Net/raw/master/saved_models/u2netp/u2netp.pth`（4.7 MB）
+
+### 代码集成（`core/detector.py`）
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import cv2
+from torchvision import transforms
+
+# ----- U²-Net 模型定义（从官方仓库复制或直接导入） -----
+class U2NET(nn.Module):
+    # ... 完整的 U2NET 网络结构 ...
+    # 可以直接从 https://github.com/xuebinqin/U-2-Net/blob/master/model/u2net.py 复制
+    pass
+
+class WatermarkDetector:
+    def __init__(self, model_path='models/u2net.pth', device='cuda'):
+        self.device = device
+        self.net = U2NET(3, 1)
+        self.net.load_state_dict(torch.load(model_path, map_location='cpu'))
+        self.net.to(device)
+        self.net.eval()
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize(320),          # U²-Net 推荐输入尺寸
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    def detect(self, image: np.ndarray) -> np.ndarray:
+        """
+        返回单通道掩码 (0-255)，水印区域为 255
+        """
+        original_h, original_w = image.shape[:2]
+        # 预处理
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        input_tensor = self.transform(img_rgb).unsqueeze(0).to(self.device)
+
+        with torch.no_grad():
+            d1, _, _, _, _, _, _ = self.net(input_tensor)
+            pred = d1[:, 0, :, :]
+            pred = torch.sigmoid(pred)
+            pred = pred.squeeze().cpu().numpy()
+
+        # 缩放回原始尺寸
+        pred = cv2.resize(pred, (original_w, original_h))
+        # 二值化
+        mask = (pred > 0.5).astype(np.uint8) * 255
+        # 形态学闭运算填补孔洞
+        kernel = np.ones((5,5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        return mask
+```
+- **注意**：U²-Net 主要用于前景显著性检测，对于复杂水印可能需要针对性微调。如果你的水印样式固定（如半透明 logo），建议收集一批带有水印的图片，手动标注 mask，然后微调 U²-Net，效果会更准。
+
+---
+
+## 3. RAFT 光流模型（视频帧间一致性）
+
+### 权重获取
+- **官方 RAFT 仓库**：`https://github.com/princeton-vl/RAFT`
+- **预训练权重**：
+  - `raft-sintel.pth`（在 Sintel 上训练）→ 下载链接：`https://drive.google.com/drive/folders/1sWDsfuZ3Up38EUPa7mDqkQ0JmBcQpC4m`
+  - 更推荐使用 `raft-things.pth` 或 `raft-kitti.pth`
+- 也可直接使用 `torchvision` 自带的 RAFT 实现（PyTorch 1.10+）：
+  ```python
+  import torchvision.models.optical_flow as optical_flow
+  model = optical_flow.raft_large(pretrained=True, progress=True)
+  ```
+
+### 集成代码（用于时域平滑）
+```python
+import torch
+import torchvision.models.optical_flow as optical_flow
+import numpy as np
+import cv2
+
+class TemporalSmoother:
+    def __init__(self, device='cuda'):
+        self.device = device
+        self.raft = optical_flow.raft_large(pretrained=True).to(device)
+        self.raft.eval()
+
+    def preprocess(self, img):
+        # 转换为 tensor, 归一化到 [-1, 1]
+        img = torch.from_numpy(img).float().permute(2,0,1).unsqueeze(0) / 127.5 - 1.0
+        return img.to(self.device)
+
+    def warp_with_flow(self, frame, flow):
+        # 使用光流对帧进行 warping
+        h, w = frame.shape[:2]
+        flow = flow.permute(0,2,3,1).cpu().numpy()
+        grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
+        map_x = (grid_x + flow[...,0]).astype(np.float32)
+        map_y = (grid_y + flow[...,1]).astype(np.float32)
+        warped = cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR)
+        return warped
+
+    def smooth_sequence(self, frames, masks):
+        # 双向光流传播修复区域，取平均
+        ...
+```
+**注意**：视频去闪烁的完整实现较为复杂，可先用简易的时域中值滤波代替，如果闪烁明显再引入光流。
+
+---
+
+## 4. 备用模型：MAT (Mask-Aware Transformer)
+
+如果 LaMa 在特定类型水印上细节不够，可以尝试 MAT。
+
+### 权重与仓库
+- **官方实现**：`https://github.com/fenglinglwb/MAT`
+- **预训练权重**：
+  - Places 数据集训练（256×256）：`https://github.com/fenglinglwb/MAT/releases/download/v1.0/MAT_Places.pth`
+  - CelebA-HQ（512×512）：`https://github.com/fenglinglwb/MAT/releases/download/v1.0/MAT_CelebA.pth`
+
+### 集成示例
+```python
+from mat import MAT  # 需要复制官方仓库中的模型定义文件
+
+class MATEngine:
+    def __init__(self, checkpoint='models/MAT_Places.pth', device='cuda'):
+        self.model = MAT()
+        self.model.load_state_dict(torch.load(checkpoint)['state_dict'], strict=False)
+        self.model.to(device)
+        self.model.eval()
+        self.device = device
+
+    def inpaint(self, image, mask):
+        # 预处理方式与 LaMa 类似，但输入格式可能不同，需参考官方文档
+        ...
+```
+由于 MAT 对输入尺寸有要求（固定 256 或 512），需要调整图像大小并后处理拼接，集成工作量比 LaMa 稍大，建议优先 LaMa。
+
+---
+
+## 快速上手建议
+
+1. **安装依赖**：
+```bash
+pip install torch torchvision opencv-python simple-lama
+# U²-Net 不需要额外 pip 包，只需复制模型文件
+```
+
+2. **下载模型**：
+   - 创建 `models/` 目录，放入：
+     - `u2net.pth`（或 `u2netp.pth`）
+     - `big-lama.pt`（由 simple-lama 首次运行时自动缓存，也可手动放置）
+
+3. **测试核心修复**：
+   ```python
+   from core.engine import InpaintingEngine
+   engine = InpaintingEngine(config={'device':'cuda', 'inpaint_model':'lama'})
+   result = engine.inpaint_image(img, mask)
+   cv2.imwrite('result.png', result)
+   ```
+   mask 可先用矩形框测试，确认修复区域无马赛克，纹理自然。
+
