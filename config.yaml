@@ -3,36 +3,60 @@
 
 detect:
   yolo_model: "models/watermark_yolo.pt"
-  conf: 0.25
+  conf: 0.15                      # Lowered from 0.25 to improve recall
   fallback_saliency: true
-  texture_lap_var_max: 500.0
-  multi_frame_confirm: 2
+  texture_lap_var_max: 500.0      # Laplacian variance threshold for texture filtering
+  multi_frame_confirm: 3          # Number of consecutive frames for multi-frame voting
 
 mask:
-  feather: 11                    # Gaussian blur kernel size for mask edges
+  feather: 22                     # Gaussian blur kernel size for mask edges (was 11)
   dilate_kernel: 5
   dilate_iter: 2
-  grabcut_iter: 3                # GrabCut refinement iterations (was 2)
+  grabcut_iter: 5                 # GrabCut refinement iterations (was 3)
   min_mask_pixels: 100
-  use_sam: true                  # Use SAM 2.1 for precise segmentation if available
+  use_sam: true                   # Use SAM 2.1 for precise segmentation if available
   sam_model: "models/sam/checkpoints/sam2.1_hiera_base_plus.pt"  # SAM 2.1 checkpoint path
   sam_model_type: "sam2.1_hiera_b+"  # SAM 2.1 config: sam2.1_hiera_b+, sam2.1_hiera_l, sam2.1_hiera_s
+  erode_boundary: 3               # Erosion kernel size at mask boundary (0=disabled)
 
 inpaint:
-  lama_resize_multiple: 32       # Resize to nearest multiple of 32 before LaMa
-  quality_ssim_threshold: 0.9    # SSIM below this => warning
+  lama_resize_multiple: 32        # Resize to nearest multiple of 32 before LaMa
+  quality_ssim_threshold: 0.85    # SSIM below this triggers auto-retry
+  auto_retry: true                # Auto-retry with expanded mask when SSIM < threshold
+  max_retries: 2                  # Max auto-retry attempts
+  retry_mask_expand: 0.10         # Mask expansion ratio per retry
 
 blend:
-  blur_ksize: 21
+  blur_ksize: 31                  # Gaussian blur kernel size for edge feathering (was 21)
   edge_filter_ksize: 3
-  poisson_edge_width: 10         # Edge width (px) for Poisson seamless cloning
+  poisson_edge_width: 10          # Edge width (px) for Poisson seamless cloning
+  color_correction: true          # Apply color correction on inpainted regions
+  disable_poisson_on_boundary: true  # Disable Poisson fusion when mask touches image boundary
 
 video:
   redetect_interval: 10
-  temporal_alpha: 0.2            # EMA weight for current frame (was temporal_alpha)
-  temporal_weight: 0.7           # Current frame weight in optical flow fusion
-  scene_change_threshold: 30.0
-  use_optical_flow: true         # DIS optical flow for mask propagation
+  temporal_alpha: 0.2             # EMA weight for current frame
+  temporal_weight: 0.45           # Current frame weight in optical flow fusion (was 0.7)
+  scene_change_threshold_ssim: 0.65  # SSIM threshold for scene change detection
+  scene_change_threshold: 30.0    # Legacy pixel-diff threshold (fallback)
+  use_optical_flow: true          # DIS optical flow for mask propagation
+  force_flow_on_detect_fail: true # Force optical flow warp when detection fails
+  mask_boundary_smooth: 5         # Frame-to-frame mask boundary smoothing kernel size
+
+dataset:
+  backgrounds:                                    # Multiple background directories
+    - "data/backgrounds/indoor"
+    - "data/backgrounds/outdoor"
+    - "data/backgrounds/landscape"
+    - "data/backgrounds/text_background"
+  watermark_texts: ["AI Generated", "Watermark"]  # Text watermarks to generate
+  negative_ratio: 0.1                             # Ratio of negative samples (no watermark)
+  distractors: true                               # Add random text/shapes to backgrounds
+  watermark_rotation: true                        # Enable watermark rotation
+  max_rotation_angle: 15                          # Max rotation angle (-15 to +15 deg)
+  pexels_api_key: "rEfBpL9joDqQ6kCOfpzx2pbHsdEdPlFGK6OjrQbEXKSJAnOiuzIX6kBS"
+  pexels_output_dir: "data/backgrounds"           # Pexels download output directory
+  pexels_num_per_scene: 80                        # Images per Pexels sub-query
 
 paths:
   project_root: "D:/AI/watermark_remover"

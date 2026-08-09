@@ -1,6 +1,7 @@
 """
 Flask API Server - Watermark Remover v12.0
 Three-stage pipeline, strict error handling, preview mask endpoint.
+v12.0: Video support in preview_mask, detailed health check, SSIM scene detection.
 """
 import os
 import sys
@@ -64,6 +65,8 @@ logger.info(f"=== API Server v12.0 started at {time.strftime('%Y-%m-%d %H:%M:%S'
 # Module-level imports
 # ============================================================
 import torch
+import cv2
+import numpy as np
 from flask import Flask, request, jsonify, send_file, render_template_string
 
 try:
@@ -333,7 +336,6 @@ var errorSwitchBtn=document.getElementById('errorSwitchBtn');
 function isVideoFile(f){return f&&f.type.startsWith('video/')}
 function isImageFile(f){return f&&f.type.startsWith('image/')}
 
-// Error popup modal
 function showError(title, msg, hint, showSwitch){
 errorTitle.textContent=title||'Processing Failed';
 errorMsg.textContent=msg||'An unknown error occurred.';
@@ -710,7 +712,18 @@ try{
 var resp=await fetch('/api/health');
 var data=await resp.json();
 if(data.status==='ready'){
-statusDiv.textContent='AI engine ready ('+data.device+') - Upload image or video';
+var parts=['AI engine ready'];
+parts.push(data.device||'unknown');
+var caps=[];
+if(data.capabilities){
+if(data.capabilities.lama) caps.push('LaMa');
+if(data.capabilities.yolo) caps.push('YOLO');
+if(data.capabilities.u2net) caps.push('U2Net');
+if(data.capabilities.sam) caps.push('SAM');
+if(data.capabilities.optical_flow) caps.push('Flow');
+}
+if(caps.length) parts.push('['+caps.join('+')+']');
+statusDiv.textContent=parts.join(' ') + ' - Upload image or video';
 statusDiv.className='status';
 }
 }catch(e){}
@@ -803,6 +816,10 @@ def index():
 
 @app.route('/api/health')
 def health():
+    """
+    Detailed health check endpoint.
+    Returns status of all modules including CUDA, LaMa, YOLO, U2-Net, SAM, and optical flow.
+    """
     status_info = {
         'status': 'ready' if engine is not None else 'initializing',
         'device': str(engine.device) if engine else 'unknown',
@@ -814,6 +831,8 @@ def health():
             'sam': engine.sam_available if engine else False,
             'optical_flow': engine.video_processor_loaded if engine else False,
         } if engine else {},
+        'version': '12.0',
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
     }
     return jsonify(status_info)
 
@@ -945,7 +964,10 @@ def process():
 
 @app.route('/api/preview_mask', methods=['POST'])
 def preview_mask():
-    """Generate and return a mask preview image for manual mode validation."""
+    """
+    Generate and return a mask preview image for manual mode validation.
+    v12.0: Supports both images and videos (extracts first frame from video).
+    """
     global engine
 
     if 'file' not in request.files:
@@ -974,18 +996,45 @@ def preview_mask():
         if engine is None:
             engine = get_engine()
 
-        # Read image
-        from PIL import Image
-        import numpy as np
-        img = Image.open(file.stream).convert('RGB')
-        image_np = np.array(img)
+        ext = Path(file.filename).suffix.lower()
+        is_video = ext in ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv')
+
+        if is_video:
+            # Extract first frame from video
+            import tempfile
+            temp_path = UPLOAD_DIR / f"_temp_preview_{int(time.time())}{ext}"
+            file.save(str(temp_path))
+
+            cap = cv2.VideoCapture(str(temp_path))
+            if not cap.isOpened():
+                return jsonify({'success': False, 'error': 'Cannot open video file'}), 400
+
+            ret, frame = cap.read()
+            cap.release()
+
+            # Clean up temp file
+            try:
+                os.remove(str(temp_path))
+            except Exception:
+                pass
+
+            if not ret:
+                return jsonify({'success': False, 'error': 'Cannot read first frame from video. '
+                                 'Capture a frame manually using the video slider.'}), 400
+
+            image_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            logger.info(f"Preview mask: extracted first frame from video ({image_np.shape[1]}x{image_np.shape[0]})")
+        else:
+            # Read image directly
+            from PIL import Image
+            img = Image.open(file.stream).convert('RGB')
+            image_np = np.array(img)
 
         # Generate preview
         preview = engine.preview_mask(image_np, bboxes)
 
         # Save preview
         preview_path = CACHE_DIR / f"mask_preview_{int(time.time())}.png"
-        import cv2
         cv2.imwrite(str(preview_path), cv2.cvtColor(preview, cv2.COLOR_RGB2BGR))
 
         return jsonify({

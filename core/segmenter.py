@@ -22,11 +22,12 @@ def _load_config():
 
 CONFIG = _load_config()
 MASK_CFG = CONFIG.get("mask", {})
-DEFAULT_FEATHER = MASK_CFG.get("feather", 11)
+DEFAULT_FEATHER = MASK_CFG.get("feather", 22)
 DILATE_KERNEL = MASK_CFG.get("dilate_kernel", 5)
 DILATE_ITER = MASK_CFG.get("dilate_iter", 2)
-GRABCUT_ITER = MASK_CFG.get("grabcut_iter", 3)
+GRABCUT_ITER = MASK_CFG.get("grabcut_iter", 5)
 MIN_MASK_PIXELS = MASK_CFG.get("min_mask_pixels", 100)
+ERODE_BOUNDARY = MASK_CFG.get("erode_boundary", 3)
 USE_SAM = MASK_CFG.get("use_sam", True)
 SAM_MODEL_PATH = MASK_CFG.get("sam_model", "models/sam_vit_h.pth")
 SAM_MODEL_TYPE = MASK_CFG.get("sam_model_type", "vit_h")
@@ -154,14 +155,20 @@ class Segmenter:
         """
         Create soft-edged mask from bounding box.
         Uses dilation + Gaussian feather for smooth transitions.
+        bbox coordinates are clamped to image boundaries to prevent out-of-bounds errors.
         """
         h, w = image_shape[:2]
         mask = np.zeros((h, w), dtype=np.uint8)
         x1, y1, x2, y2 = bbox
+        # Boundary clamp: ensure all coordinates are strictly within image bounds
         x1 = max(0, min(int(x1), w - 1))
         y1 = max(0, min(int(y1), h - 1))
         x2 = max(x1 + 1, min(int(x2), w))
         y2 = max(y1 + 1, min(int(y2), h))
+        if x2 <= x1 or y2 <= y1:
+            logger.warning(f"mask_from_bbox: invalid bbox after clamp: ({x1},{y1})-({x2},{y2})")
+            x2 = min(x1 + 10, w)
+            y2 = min(y1 + 10, h)
         mask[y1:y2, x1:x2] = 255
 
         # Dilate to cover watermark edges
@@ -226,7 +233,8 @@ class Segmenter:
         1. Binarize (threshold 30)
         2. Morphological close (fill small holes)
         3. Dilate slightly
-        4. Gaussian feather for soft edges
+        4. Erode boundary (reduce over-coverage at edges)
+        5. Gaussian feather for soft edges
         Returns 0-255 uint8 soft mask.
         """
         # Binarize
@@ -243,6 +251,17 @@ class Segmenter:
             dilate_ksize += 1
         dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_ksize, dilate_ksize))
         mask_dilated = cv2.dilate(mask_closed, dilate_kernel, iterations=DILATE_ITER)
+
+        # Erode boundary to reduce over-coverage on edges
+        if ERODE_BOUNDARY > 0:
+            erode_ksize = ERODE_BOUNDARY
+            if erode_ksize % 2 == 0:
+                erode_ksize += 1
+            erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_ksize, erode_ksize))
+            mask_eroded = cv2.erode(mask_dilated, erode_kernel, iterations=1)
+            logger.debug(f"Eroded mask boundary: kernel={erode_ksize}, "
+                         f"pixels before={np.sum(mask_dilated > 0)}, after={np.sum(mask_eroded > 0)}")
+            mask_dilated = mask_eroded
 
         # Gaussian feather for soft edges
         gauss_ksize = feather * 2 + 1

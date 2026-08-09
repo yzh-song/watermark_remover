@@ -1,6 +1,6 @@
 """
 Watermark Detector - YOLO-first with saliency fallback and texture filtering.
-Version 12.0 - Strict YOLO (no pretrained fallback), rembg/U2Net saliency, texture filter.
+Version 12.0 - Strict YOLO (no pretrained fallback), rembg/U2Net saliency, texture filter, multi-frame voting.
 """
 import os
 import logging
@@ -27,9 +27,10 @@ MODEL_DIR = Path(CONFIG.get("paths", {}).get("models_dir", r"D:\AI\watermark_rem
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 DETECT_CFG = CONFIG.get("detect", {})
-DEFAULT_CONF = DETECT_CFG.get("conf", 0.25)
+DEFAULT_CONF = DETECT_CFG.get("conf", 0.15)
 TEXTURE_LAP_VAR_MAX = DETECT_CFG.get("texture_lap_var_max", 500.0)
 FALLBACK_SALIENCY = DETECT_CFG.get("fallback_saliency", True)
+MULTI_FRAME_CONFIRM = DETECT_CFG.get("multi_frame_confirm", 3)
 
 
 class WatermarkNotFoundError(Exception):
@@ -43,6 +44,7 @@ class WatermarkDetector:
     Multi-strategy watermark detector.
     Priority: YOLO (trained) > U2-Net saliency (rembg) > Error.
     Strict mode: no pretrained YOLO fallback, no CV corner detection.
+    v12.0: Multi-frame voting for video, lowered confidence threshold.
     """
 
     def __init__(self, device: str = 'auto'):
@@ -52,11 +54,17 @@ class WatermarkDetector:
         self.u2net_model = None
         self.u2net_loaded = False
         self.detection_stats = {'yolo': 0, 'u2net': 0}
+        # Multi-frame voting buffer for video
+        self._frame_vote_buffer = []
 
     def _get_device(self, device: str) -> torch.device:
         if device == 'auto':
             return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         return torch.device(device)
+
+    def reset_vote_buffer(self):
+        """Clear the multi-frame voting buffer. Call before processing a new video."""
+        self._frame_vote_buffer = []
 
     # ================================================================
     # YOLO Detection (Primary)
@@ -115,8 +123,7 @@ class WatermarkDetector:
                         ))
 
             if boxes:
-                self.detection_stats['yolo'] += 1
-                logger.info(f"YOLO detected {len(boxes)} regions")
+                logger.info(f"YOLO detected {len(boxes)} regions (conf={conf:.2f})")
             return boxes
 
         except Exception as e:
@@ -161,6 +168,67 @@ class WatermarkDetector:
         except Exception as e:
             logger.error(f"U2-Net detection failed: {e}")
             return None
+
+    # ================================================================
+    # Multi-Frame Voting (Video)
+    # ================================================================
+
+    @staticmethod
+    def _box_iou(box_a: Tuple[int, int, int, int],
+                 box_b: Tuple[int, int, int, int]) -> float:
+        """Compute IoU between two bounding boxes."""
+        x1 = max(box_a[0], box_b[0])
+        y1 = max(box_a[1], box_b[1])
+        x2 = min(box_a[2], box_b[2])
+        y2 = min(box_a[3], box_b[3])
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+        union = area_a + area_b - inter
+        return inter / max(union, 1)
+
+    def _multi_frame_vote(self,
+                          boxes: List[Tuple[int, int, int, int]],
+                          iou_threshold: float = 0.3) -> List[Tuple[int, int, int, int]]:
+        """
+        Multi-frame voting: a detection is confirmed only if it appears
+        in at least 2 out of the last MULTI_FRAME_CONFIRM frames.
+        This filters out transient false positives in video.
+
+        Args:
+            boxes: Current frame's detected boxes
+            iou_threshold: IoU threshold for considering two boxes as matching
+
+        Returns:
+            Confirmed boxes (only those that appear in >= 2 frames)
+        """
+        self._frame_vote_buffer.append(boxes)
+
+        # Keep only the last N frames
+        if len(self._frame_vote_buffer) > MULTI_FRAME_CONFIRM:
+            self._frame_vote_buffer = self._frame_vote_buffer[-MULTI_FRAME_CONFIRM:]
+
+        if len(self._frame_vote_buffer) < 2:
+            # Not enough history yet, return current detections
+            return boxes
+
+        confirmed = []
+        for box in boxes:
+            box_count = 1  # Current frame counts
+            for prev_boxes in self._frame_vote_buffer:
+                if prev_boxes is boxes:
+                    continue
+                for prev_box in prev_boxes:
+                    if self._box_iou(box, prev_box) > iou_threshold:
+                        box_count += 1
+                        break
+            if box_count >= 2:  # At least 2 frames with this detection
+                confirmed.append(box)
+
+        if len(confirmed) < len(boxes):
+            logger.info(f"Multi-frame vote: {len(boxes)} -> {len(confirmed)} confirmed "
+                        f"(need >=2/{MULTI_FRAME_CONFIRM} frames)")
+        return confirmed
 
     # ================================================================
     # Region Filtering
@@ -245,10 +313,18 @@ class WatermarkDetector:
     def detect_watermarks(self,
                           image: np.ndarray,
                           use_yolo: bool = True,
-                          use_saliency: bool = True) -> List[Tuple[int, int, int, int]]:
+                          use_saliency: bool = True,
+                          is_video_frame: bool = False) -> List[Tuple[int, int, int, int]]:
         """
         Main watermark detection.
         YOLO-first with saliency fallback. No CV fallback.
+        For video frames, multi-frame voting is applied to filter false positives.
+
+        Args:
+            image: RGB uint8 numpy array (H, W, 3)
+            use_yolo: Enable YOLO detection
+            use_saliency: Enable U2-Net saliency fallback
+            is_video_frame: Whether this is a video frame (enables multi-frame voting)
 
         Returns:
             List of (x1, y1, x2, y2) bounding boxes, max 5 regions.
@@ -258,7 +334,7 @@ class WatermarkDetector:
         """
         h, w = image.shape[:2]
 
-        # Strategy 1: YOLO (primary)
+        # Strategy 1: YOLO (primary) with lowered confidence
         if use_yolo and self.yolo_loaded:
             yolo_boxes = self.detect_with_yolo(image, conf=DEFAULT_CONF)
             if yolo_boxes:
@@ -266,10 +342,23 @@ class WatermarkDetector:
                 if yolo_boxes:
                     yolo_boxes = self._filter_texture_regions(image, yolo_boxes)
                     if yolo_boxes:
-                        self.detection_stats['yolo'] += 1
-                        regions = self._merge_regions(yolo_boxes, w, h)
-                        logger.info(f"YOLO final: {len(regions)} regions")
-                        return regions[:5]
+                        # Multi-frame voting for video
+                        if is_video_frame:
+                            yolo_boxes = self._multi_frame_vote(yolo_boxes)
+                            if not yolo_boxes:
+                                logger.info("Multi-frame vote rejected all YOLO boxes, "
+                                            "trying saliency fallback...")
+                        else:
+                            self.detection_stats['yolo'] += 1
+                            regions = self._merge_regions(yolo_boxes, w, h)
+                            logger.info(f"YOLO final: {len(regions)} regions")
+                            return regions[:5]
+
+                        if yolo_boxes:
+                            self.detection_stats['yolo'] += 1
+                            regions = self._merge_regions(yolo_boxes, w, h)
+                            logger.info(f"YOLO final (voted): {len(regions)} regions")
+                            return regions[:5]
 
         # Strategy 2: U2-Net saliency (secondary)
         if use_saliency and FALLBACK_SALIENCY and self.u2net_loaded:
